@@ -1,0 +1,799 @@
+---
+title: "Machine Learning: Mathematical Theory and Applications"
+subtitle: "Computer lab 2"
+author: 
+  - Nicholas Millar and Edward Mckenzie
+date: last-modified
+format: 
+  html:
+    self-contained: true
+toc: true
+execute:
+  error: false
+language: 
+  title-block-author-single: " "
+theme: Default
+title-block-banner-color: Primary
+editor: visual
+---
+
+## 1. Bagging and boosting for bike rental data (regression)
+
+```{r}
+rm(list=ls()) # Remove variables 
+cat("\014") # Clean workspace
+suppressMessages(library(dplyr))
+suppressMessages(library(splines))
+suppressMessages(library(randomForest))
+suppressMessages(library(xgboost))
+
+bike_data = read.csv("bike_rental_hourly.csv")
+
+
+head(bike_data)
+bike_data$log_cnt <- log(bike_data$cnt)
+bike_data$hour <- bike_data$hr/23 # transform [0, 23] to [0, 1]. 0 is midnight, 1 is 11 PM
+
+# One hot for weathersit
+one_hot_encode_weathersit <- model.matrix(~ as.factor(weathersit) - 1,data = bike_data)
+one_hot_encode_weathersit  <- one_hot_encode_weathersit[, -1] # Remove reference category
+colnames(one_hot_encode_weathersit) <- c('cloudy', 'light rain', 'heavy rain')
+bike_data <- cbind(bike_data, one_hot_encode_weathersit)
+
+# One hot for weekday
+one_hot_encode_weekday <- model.matrix(~ as.factor(weekday) - 1,data = bike_data)
+one_hot_encode_weekday  <- one_hot_encode_weekday[, -1] # Remove reference category
+colnames(one_hot_encode_weekday) <- c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+bike_data <- cbind(bike_data, one_hot_encode_weekday)
+
+# One hot for weekday
+one_hot_encode_season <- model.matrix(~ as.factor(season) - 1,data = bike_data)
+one_hot_encode_season  <- one_hot_encode_season[, -1] # Remove reference category
+colnames(one_hot_encode_season) <- c('Spring', 'Summer', 'Fall')
+bike_data <- cbind(bike_data, one_hot_encode_season)
+
+# Create lags
+bike_data_new <- mutate(bike_data, lag1 = lag(log_cnt, 1), lag2 = lag(log_cnt, 2), 
+                        lag3 = lag(log_cnt, 3), lag4 = lag(log_cnt, 4), lag24 = lag(log_cnt, 24))
+
+bike_data_new <- bike_data_new[-c(1:24),] # Lost 24 obs because of lagging
+
+# Create training and test data
+bike_all_data_train <- bike_data_new[bike_data_new$dteday >= as.Date("2011-01-01") & bike_data_new$dteday <=  as.Date("2012-05-31"), ]
+bike_all_data_test <- bike_data_new[bike_data_new$dteday >= as.Date("2012-06-01") & bike_data_new$dteday <=  as.Date("2012-12-31"), ]
+X_train <- cbind(1, bike_all_data_train[, c("lag1", "lag2",  "lag3", "lag4", "lag24")])
+spline_basis <- ns(bike_all_data_train$hour, df = 10, intercept = FALSE)
+X_train <- cbind(X_train, spline_basis)
+colnames(X_train)[1] <- "intercept"
+knots <- attr(spline_basis, "knots")
+variables_to_keep_in_X <- c("yr", "holiday", "workingday", "temp", "atemp", "hum", "windspeed") 
+variables_to_keep_in_X <- c(variables_to_keep_in_X, colnames(one_hot_encode_weathersit), colnames(one_hot_encode_weekday), colnames(one_hot_encode_season))
+X_train <- cbind(X_train, bike_all_data_train[, variables_to_keep_in_X])
+head(X_train)
+# Training data
+X_train <- as.matrix(X_train)
+y_train <- bike_all_data_train$log_cnt
+# Test data
+y_test <- bike_all_data_test$log_cnt
+X_test <- cbind(1, bike_all_data_test[, c("lag1", "lag2",  "lag3", "lag4", "lag24")])
+spline_basis_test <- ns(bike_all_data_test$hour, df=10, knots=knots, intercept = FALSE)
+X_test <- cbind(X_test, spline_basis_test)
+colnames(X_test)[1] <- "intercept"
+X_test <- cbind(X_test, bike_all_data_test[, variables_to_keep_in_X])
+X_test <- as.matrix(X_test)
+```
+
+#### 💪 Problem 1.1
+
+```{r}
+#RMSE Function 
+RMSE = function(y_pred, y_actual){
+    sqrt(mean((y_pred - y_actual)^2))
+}
+
+rf_50 = randomForest(X_train, y_train, ntree=50)
+rf_100 = randomForest(X_train, y_train, ntree=100)
+rf_150 = randomForest(X_train, y_train, ntree=150)
+
+```
+
+```{r}
+yhat_train_50_forest = predict(rf_50, newdata=X_train)
+yhat_train_100_forest = predict(rf_100, newdata=X_train)
+yhat_train_150_forest = predict(rf_150, newdata=X_train)
+
+yhat_test_50_forest = predict(rf_50, newdata=X_test)
+yhat_test_100_forest = predict(rf_100, newdata=X_test)
+yhat_test_150_forest = predict(rf_150, newdata=X_test)
+
+rmse_y_hat_train_50 = RMSE(yhat_train_50_forest, y_train)
+rmse_y_hat_train_100 = RMSE(yhat_train_100_forest, y_train)
+rmse_y_hat_train_150 = RMSE(yhat_train_150_forest, y_train)
+
+rmse_y_hat_test_50 = RMSE(yhat_test_50_forest, y_test)
+rmse_y_hat_test_100 = RMSE(yhat_test_100_forest, y_test)
+rmse_y_hat_test_150 = RMSE(yhat_test_150_forest, y_test)
+
+#RMSE For Training
+cat("\nRMSE for training 50 trees is ", rmse_y_hat_train_50)
+cat("\nRMSE for training 100 trees is ", rmse_y_hat_train_100)
+cat("\nRMSE for training 150 trees is ", rmse_y_hat_train_150)
+
+#RMSE for Test
+cat("\nRMSE for test 50 trees is ", rmse_y_hat_test_50)
+cat("\nRMSE for test 100 trees is ", rmse_y_hat_test_100)
+cat("\nRMSE for test 150 trees is ", rmse_y_hat_test_150)
+
+```
+
+#### 💪 Problem 1.2
+
+```{r}
+#extract the last week of test data
+last_week_test = bike_all_data_test[bike_all_data_test$dteday >= as.Date("2012-12-25") & bike_all_data_test$dteday <= as.Date("2012-12-31"), ]
+
+#converting it to a data frame
+yhat_test_50_forest = as.data.frame(yhat_test_50_forest)
+yhat_test_100_forest = as.data.frame(yhat_test_100_forest)
+
+#use row names from last_week_test to filter y_hat_test
+fitted_values_last_week_50 = yhat_test_50_forest[row.names(last_week_test),]
+fitted_values_last_week_100 = yhat_test_100_forest[row.names(last_week_test),]
+
+n = 1:(24*7)[-c(168)] #creating numbers ranging from 1 to 167
+n = n[-c(168)]
+
+#Plot
+plot(n, last_week_test$cnt,  xlab = "1:(24*7)",ylab = "Fitted Values",main = "Prob 1.2: Actual vs. Fitted Values",col = "cornflowerblue",pch = 16)
+points(n, exp(fitted_values_last_week_50), col = "lightcoral", pch = 16)
+points(n, exp(fitted_values_last_week_100), col = "yellow", pch = 16)
+legend(x = "topleft", pch = c(16, 16), col = c("cornflowerblue", "lightcoral", "yellow"), legend=c("Actual Count", "Fitted Values - 50 Trees", "Fitted Values - 100 Trees"))
+
+```
+
+**The fit is quite similar between the 50 and 100 random forest models however as the RMSE for 100 is lower than 50 the 100 appears to be marginally a better model. For counts around the 40 mark, the actual observed values are lower then the predicted value.**
+
+#### 💪 Problem 1.3
+
+```{r}
+#verbose = 0 stops the train-rmse from printing
+fit_boost_10 = xgboost(data = as.matrix(X_train), label = y_train, nrounds = 10, verbose = 0)  
+fit_boost_25 = xgboost(data = as.matrix(X_train), label = y_train, nrounds = 25, verbose = 0)  
+fit_boost_50 = xgboost(data = as.matrix(X_train), label = y_train, nrounds = 50, verbose = 0)  
+
+yhat_train_10_boost = predict(fit_boost_10, newdata = as.matrix(X_train))
+yhat_train_25_boost = predict(fit_boost_25, newdata = as.matrix(X_train))
+yhat_train_50_boost = predict(fit_boost_50, newdata = as.matrix(X_train))
+
+yhat_test_10_boost = predict(fit_boost_10, newdata = as.matrix(X_test))
+yhat_test_25_boost = predict(fit_boost_25, newdata = as.matrix(X_test))
+yhat_test_50_boost = predict(fit_boost_50, newdata = as.matrix(X_test))
+
+rmse_y_hat_train_10 = RMSE(yhat_train_10_boost, y_train)
+rmse_y_hat_train_25 = RMSE(yhat_train_25_boost, y_train)
+rmse_y_hat_train_50 = RMSE(yhat_train_50_boost, y_train)
+
+rmse_y_hat_test_10 = RMSE(yhat_test_10_boost, y_test)
+rmse_y_hat_test_25 = RMSE(yhat_test_25_boost, y_test)
+rmse_y_hat_test_50 = RMSE(yhat_test_50_boost, y_test)
+
+#RMSE For Training
+cat("\nRMSE for training 10 boost is ", rmse_y_hat_train_10)
+cat("\nRMSE for training 25 boost is ", rmse_y_hat_train_25)
+cat("\nRMSE for training 50 boost is ", rmse_y_hat_train_50)
+
+#RMSE for Test
+cat("\nRMSE for test 10 boost is ", rmse_y_hat_test_10)
+cat("\nRMSE for test 25 boost is ", rmse_y_hat_test_25)
+cat("\nRMSE for test 50 boost is ", rmse_y_hat_test_50)
+
+```
+
+#### 💪 Problem 1.4
+
+```{r}
+
+#best bagging model in problem 1.2
+yhat_test_100_forest = predict(rf_100, newdata=X_test)
+
+#best boosting model from problem 1.3
+yhat_test_50_boost = predict(fit_boost_50, as.matrix(X_test))
+
+#converting it to a data frame
+yhat_test_bag = as.data.frame(yhat_test_100_forest)
+
+#use row names from last_week_test to filter y_hat_test
+fitted_values_last_week_bag = yhat_test_bag[row.names(last_week_test),]
+fitted_values_last_week_boost = tail(yhat_test_50_boost, nrow(last_week_test))
+
+
+n = 1:(24*7)[-c(168)] #creating numbers ranging from 1 to 167
+n = n[-c(168)]
+
+#Plot
+plot(n, last_week_test$cnt,  xlab = "1:(24*7)",ylab = "Fitted Values",main = "Prob 1.4: Actual vs. Fitted Values", col = "cornflowerblue", pch = 16)
+points(n, exp(fitted_values_last_week_bag), col = "lightcoral", pch = 16)
+points(n, exp(fitted_values_last_week_boost), col = "green", pch = 16)
+legend(x = "topleft", pch = c(16, 16), col = c("cornflowerblue", "lightcoral", "green"), legend=c("Actual Count", "Fitted Values - Bag", "Fitted Values - Boost"))
+
+```
+
+**The bag and boosting model produce similar fitted values and both seem to be appropriate models for this problem. It does appear that boosting produces some extreme values such as around count 10 and count 70 when the bagging model does not.**
+
+## 2. Bagging and boosting for spam email data (classification)
+
+```{r}
+rm(list=ls()) # Remove variables 
+cat("\014") # Clean workspace
+load(file = "spam_ham_emails.RData")
+library(randomForest)
+library(pROC)
+library(caret)
+library(xgboost)
+Spam_ham_emails[, -1] <- scale(Spam_ham_emails[, -1])
+Spam_ham_emails['spam'] <- as.factor(Spam_ham_emails['spam'] == 1) # Changing from 1->TRUE, 0->FALSE
+levels(Spam_ham_emails$spam) <- c("not spam", "spam")
+head(Spam_ham_emails)
+set.seed(1234)
+suppressMessages(library(caret))
+train_obs <- createDataPartition(y = Spam_ham_emails$spam, p = .75, list = FALSE)
+train <- Spam_ham_emails[train_obs, ]
+y_train <- train$spam
+X_train <- train[, -1]
+test <- Spam_ham_emails[-train_obs, ]
+y_test <- test$spam
+X_test <- test[, -1]
+
+# Confirm both training and test are balanced with respect to spam emails
+print(paste("Percentage of training data consisting of spam emails:", 
+              100*mean(train$spam == "spam")))
+print(paste("Percentage of test data consisting of spam emails:", 
+              100*mean(test$spam == "spam")))
+```
+
+#### 💪 Problem 2.1
+
+```{r}
+fit_rf_50 = randomForest(y_train ~., data=X_train, ntree=50)
+fit_rf_100 = randomForest(y_train ~., data=X_train, ntree=100)
+fit_rf_500 = randomForest(y_train ~., data=X_train, ntree=500)
+
+yhat_test_50 = predict(fit_rf_50, newdata=X_test, type="prob")[,2]
+yhat_test_100 = predict(fit_rf_100, newdata=X_test, type="prob")[,2]
+yhat_test_500 = predict(fit_rf_500, newdata=X_test, type="prob")[,2]
+
+roc50 = roc(test$spam, yhat_test_50)
+roc100 = roc(test$spam, yhat_test_100)
+roc500 = roc(test$spam, yhat_test_500)
+
+plot(roc50, print.auc = TRUE, auc.polygon = FALSE, auc.polygon.col = "cornflowerblue", print.thres = "best")
+lines(roc100, col="blue", lwd=2)
+lines(roc500, col="green", lwd=2)
+
+auc50 = auc(roc50)
+auc100 = auc(roc100)
+auc500 = auc(roc500)
+
+```
+
+```{r}
+cat("\nAUC for Random Forest with 50 trees ", auc50)
+cat("\nAUC for Random Forest with 100 trees ", auc100)
+cat("\nAUC for Random Forest with 500 trees ", auc500)
+
+```
+
+**The ROC curves and also area under the curve (AUC) are very similar for the three random forest models. This could suggest that random forest models can perform well regardless of the number of trees specified. It seems that regardless of the tree specification the fits are capturing the underlying data effectively.**
+
+#### 💪 Problem 2.2
+
+```{r}
+threshold = 0.5 # Predict spam if probability > threshold
+yhat_test_100_prob = as.factor(yhat_test_100 > threshold)
+levels(yhat_test_100_prob)  = c("not spam", "spam")
+confusionMatrix(data = yhat_test_100_prob, test$spam, positive = "spam")
+```
+
+```{r}
+X_train_xgb <- as.matrix(X_train)
+X_test_xgb <- as.matrix(X_test)
+y_train_xgb <- as.integer(y_train) - 1
+y_test_xgb <- as.integer(y_test) - 1
+```
+
+#### 💪 Problem 2.3
+
+```{r}
+X_train_xgb <- as.matrix(X_train)
+X_test_xgb <- as.matrix(X_test)
+y_train_xgb <- as.integer(y_train) - 1
+y_test_xgb <- as.integer(y_test) - 1
+
+fit_boost_10 = xgboost(data = X_train_xgb, label = y_train_xgb, nrounds = 10, objective = "binary:logistic", verbose = 0)  
+fit_boost_25 = xgboost(data = X_train_xgb, label = y_train_xgb, nrounds = 25, objective = "binary:logistic", verbose = 0)  
+fit_boost_50 = xgboost(data = X_train_xgb, label = y_train_xgb, nrounds = 50, objective = "binary:logistic", verbose = 0)  
+
+yhat_test_10 = predict(fit_boost_10, newdata = X_test_xgb)
+yhat_test_25 = predict(fit_boost_25, newdata = X_test_xgb)
+yhat_test_50 = predict(fit_boost_50, newdata = X_test_xgb)
+
+roc_boost_10 = roc(y_test_xgb, yhat_test_10)
+roc_boost_25 = roc(y_test_xgb, yhat_test_25)
+roc_boost_50 = roc(y_test_xgb, yhat_test_50)
+
+plot(roc_boost_10, print.auc = TRUE, auc.polygon = FALSE, auc.polygon.col = "cornflowerblue", print.thres = "best")
+lines(roc_boost_25, col="blue", lwd=2)
+lines(roc_boost_50, col="green", lwd=2)
+lines(roc100, col="lightcoral", lwd=2)
+
+auc_boost_10 = auc(roc_boost_10)
+auc_boost_25 = auc(roc_boost_25)
+auc_boost_50 = auc(roc_boost_50)
+
+```
+
+```{r}
+cat("\nAUC for xgboost with 10 rounds ", auc_boost_10)
+cat("\nAUC for xgboost with 25 rounds ", auc_boost_25)
+cat("\nAUC for xgboost with 50 rounds ", auc_boost_50)
+```
+
+**Again it appears as if all 4 models in terms of the ROC curve as they are all close to the left hand side. However it does appear that the boost model with 25 rounds (dark blue) is furthest away from the left hand corner relative to the other models (Highest AUC) indicating it has the best performance of the three when classifying between spam and non-spam emails.**
+
+#### 💪 Problem 2.4
+
+```{r}
+threshold = 0.5 # Predict spam if probability > threshold
+yhat_test_25_prob = as.factor(yhat_test_25 > threshold)
+levels(yhat_test_25_prob)  = c("not spam", "spam")
+confusionMatrix(data = yhat_test_25_prob, test$spam, positive = "spam")
+
+```
+
+## 3. Learning parametric models by gradient based optimisation
+
+```{r}
+rm(list=ls()) # Remove variables 
+cat("\014") # Clean workspace
+gen_x <- function(seed=123){
+  set.seed(seed)
+  return(runif(0, 1, n = 1000))
+}
+# Test
+x <- gen_x()
+length(x)
+head(x)
+```
+
+#### 💪 Problem 3.1
+
+```{r}
+beta_0 = 0.3
+beta_1 = 2.5
+
+lambda = exp(beta_0 + beta_1 * x)
+
+y = rpois(1000, lambda)
+```
+
+#### 💪 Problem 3.2
+
+```{r}
+x_grid = seq(0, 1, length.out=10000)
+
+conditional_expected = exp(beta_0 + beta_1 * x_grid)
+
+plot(x, y,  xlab = "x",ylab = "y",
+     main = "Prob 3.2: Poisson Regression Model",
+     col = "cornflowerblue",
+     pch = 16)
+points(x_grid, conditional_expected, col = "lightcoral", pch = 16)
+legend(x = "topleft", pch = c(16, 16), col = c("cornflowerblue", "lightcoral"), legend=c("Observations", "Conditional Expected"))
+
+```
+
+#### 💪 Problem 3.3
+
+PMF for Poisson Model:
+
+$$
+p(y|\mu)=\frac{\mu^y\exp(-\mu)}{y!}
+$$
+
+Where:
+
+$$
+\mu_i = exp(\beta_0 + \beta_1*x_i)
+$$
+
+Across observations:
+
+$$
+ \prod_{i=1}^{n} p(Y_i|X_i, \beta) = \prod_{i=1}^{n} \frac{exp(-\mu_i)\mu_i^{Y_i}}{Y_{i}!} = \prod_{i=1}^{n} \frac{exp(-\exp(\beta_0 + \beta_1*x_i))\exp(\beta_0 + \beta_1*x_i)^{Y_i}}{Y_{i}!} 
+$$
+
+Since y's are independent:
+
+$$
+p(Y_1,Y_2,…,Y_n|X_1,X_2,….,X_n) = p(Y_1|X_1) * f(Y_2|X_2) * … * p(Y_n|X_n)
+$$
+
+Taking Logs:
+
+$$
+\ell(\beta_0, \beta_1)=\log p(y_1,y_2,\dots,y_n|x_1,x_2,\dots,x_n,\beta_0, \beta_1)
+$$
+
+$$
+\ell(\beta_0, \beta_1) = \sum_{i=1}^{n} ln(\frac{exp(-\mu_i))\mu_i^{Y_i}}{y_i!}) = \sum_{i=1}^{n} [ln(\exp(-\mu_i)) - ln(y_i!) + ln(\mu_{i}^{y_i})] 
+$$
+
+$$
+\therefore \ell(\beta_0, \beta_1) = \sum_{i=1}^{n}[-exp(\beta_0 + \beta_1*x_i) - ln(y_i!) + y_i*(\beta_0 + \beta_1*x_i) )]
+$$
+
+#### 💪 Problem 3.4
+
+To find the gradient, we take the derivative of the below expression with respect to each parameter:
+
+$$ 
+\sum_{i=1}^{n}[-exp(\beta_0 + \beta_1*x_i) - ln(y_i!) + y_i*(\beta_0 + \beta_1*x_i) )]
+$$
+
+For $\partial\beta_0$:
+
+$$
+\frac{\partial \ln p(y_i|x_i,\beta_0, \beta_1)}{\partial \beta_1^2} = \sum_{i=1}^{n}[y_i - e^{(\beta_0 + \beta_1 * x_i)}]
+$$
+
+For $\partial\beta_1$:
+
+$$
+\frac{\partial \ln p(y_i|x_i,\beta_0, \beta_1)}{\partial \beta_1^2} = \sum_{i=1}^{n}[y_i * x_i - x_i * e^{(\beta_0 + \beta_1 * x_i)}] = \sum_{i=1}^{n}x_i * [y_i - e^{(\beta_0 + \beta_1 * x_i)}]
+$$
+
+#### 💪 Problem 3.5
+
+```{r}
+loss_func = function (y, x, beta_0, beta_1) {
+  sum(y * (beta_0 + beta_1 * x) - exp(beta_0 + beta_1 * x) - log(factorial(y)))
+} 
+
+grads = function (y, x, beta_0, beta_1) {
+  dB0 <- sum(y - exp(beta_0 + beta_1 * x))
+  dB1 <- sum(x * (y - exp(beta_0 + beta_1 * x)))
+  output <- c(dB0, dB1)
+  return(output)
+}
+```
+
+#### 💪 Problem 3.6
+
+```{r}
+cost_func = function(n, log_loss) {
+  -(1/n) * log_loss
+}
+
+gradient_func = function(n, gradients) {
+  -(1/n) * gradients
+}
+
+gradient_descent = function (y, x, learning_rate, iterations) {
+  
+  beta_0 <- 1.0
+  beta_1 <- 1.0
+  betas <- c(beta_0, beta_1)
+  n <- length(y)
+  
+  beta_track <- matrix(0, nrow = n, ncol = length(betas))
+  cost_track <- c()
+  
+  for(i in 1:iterations){
+    
+    loss <- loss_func(y, x, betas[1], betas[2])
+    cost <- cost_func(n, loss)
+    cost_track[i] <- cost
+    
+    gradients <- grads(y, x, betas[1], betas[2])
+    update <- gradient_func(n, gradients)
+    
+    betas <- betas - learning_rate * update
+    beta_track[i,] = betas
+    
+  }
+  
+  return(
+    list(
+      Params = betas,
+      Beta_hist = beta_track,
+      Loss_hist = cost_track))
+    
+  
+}
+
+params_0.01 <- gradient_descent(y, x, 0.01, 200)
+params_0.1 <- gradient_descent(y, x, 0.1, 200)
+params_0.25 <- gradient_descent(y, x, 0.25, 200)
+
+LR_0.01_est <- params_0.01$Params
+LR_0.1_est <- params_0.1$Params
+LR_0.25_est <- params_0.25$Params
+
+cat("\nParameter Estimates for LR = 0.01: ", LR_0.01_est[1], LR_0.01_est[2])
+cat("\nParameter Estimates for LR = 0.1: ", LR_0.1_est[1], LR_0.1_est[2])
+cat("\nParameter Estimates for LR = 0.01: ", LR_0.25_est[1], LR_0.25_est[2])
+
+#plot the beta and loss
+```
+
+```{r}
+#plot of cost functon for the 3 different learning rates
+plot(params_0.01$Loss_hist, type = 'l', col = 'lightcoral', xlab = 'Iterations', ylab = 'Cost', main = 'Cost vs Iterations for each learning rate', ylim = c(2,4))
+lines(params_0.1$Loss_hist, col = 'cornflowerblue')
+lines(params_0.25$Loss_hist, col = 'forestgreen')
+legend("topright", legend = c("Learn Rate = 0.01", "Learn Rate = 0.1", "Learn Rate = 0.25"), col = c('lightcoral', 'cornflowerblue', 'forestgreen'), lty = 1)
+
+```
+
+```{r}
+#plot of updates vs the iteration number for the 3 different learning rates - Beta 0
+plot(params_0.01$Beta_hist[,1], type = 'l', col = 'lightcoral', xlab = 'Iterations', ylab = 'Cost', main = 'Beta 0 vs Iterations', xlim = (c(0,200)), ylim = c(0,2))
+lines(params_0.1$Beta_hist[,1], col = 'cornflowerblue')
+lines(params_0.25$Beta_hist[,1], col = 'forestgreen')
+legend("topright", legend = c("Learn Rate = 0.01", "Learn Rate = 0.1", "Learn Rate = 0.25"), col = c('lightcoral', 'cornflowerblue', 'forestgreen'), lty = 1)
+
+```
+
+```{r}
+#plot of updates vs the iteration number for the 3 different learning rates - Beta 1
+plot(params_0.01$Beta_hist[,2], type = 'l', col = 'lightcoral', xlab = 'Iterations', ylab = 'Cost', main = 'Beta 1 vs Iterations', xlim = (c(0,200)), ylim = c(0.5,4))
+lines(params_0.1$Beta_hist[,2], col = 'cornflowerblue')
+lines(params_0.25$Beta_hist[,2], col = 'forestgreen')
+legend("topright", legend = c("Learn Rate = 0.01", "Learn Rate = 0.1", "Learn Rate = 0.25"), col = c('lightcoral', 'cornflowerblue', 'forestgreen'), lty = 1)
+```
+
+**Comments: A high learning rate (0.25) results in an erratic cost curve with sharp oscillations, suggesting larger, potentially overshooting steps in the parameter space. In contrast, lower rates (0.01, 0.1) yield smoother curves, reflecting more stable convergence. While 0.01 provides stability, it never gets close to the true parameter values due to the small step size. The 0.1 rate strikes a balance, offering both speed and stability towards the minima.**
+
+#### 💪 Problem 3.7
+
+```{r}
+
+stochastic_descent = function (y, x, epochs, batch_size) {
+  
+  beta_0 <- 1.0
+  beta_1 <- 1.0
+  beta <- c(beta_0, beta_1)
+  n <- length(y)
+  nb <- batch_size
+  num_of_batches <- n/nb
+  
+  cost_track <- c()
+  
+  for(i in 1:epochs){
+    
+    sample_idx <- sample(1:length(x))
+    x <- x[sample_idx]
+    y <- y[sample_idx]
+    epoch_loss <- 0
+
+    for(j in 1:num_of_batches){
+      
+      loss <- loss_func(y[((j-1)*nb+1) : (j*nb)], x[((j-1)*nb+1) : (j*nb)], beta[1], beta[2])
+      cost <- cost_func(nb, loss)
+      epoch_loss <- epoch_loss + cost
+      
+      gradients <- grads(y[((j-1)*nb+1) : (j*nb)], x[((j-1)*nb+1) : (j*nb)], beta[1], beta[2])
+      update <- gradient_func(nb, gradients)
+      
+      beta <- beta - (0.5 / (j^0.6)) * update
+      
+    }
+    cost_track[i] <- epoch_loss
+    
+  }
+  
+  return(list(beta = beta, Cost_hist = cost_track))
+  
+}
+
+sgd_10 <- stochastic_descent(y, x, 20, 10)
+sgd_50 <- stochastic_descent(y, x, 20, 50)
+sgd_100 <- stochastic_descent(y, x, 20, 100)
+
+BS_10_est <- sgd_10$beta
+BS_50_est <- sgd_50$beta
+BS_100_est <- sgd_100$beta
+
+cat("\nParameter Estimates for Batch Size = 10: ", BS_10_est[1], BS_10_est[2])
+cat("\nParameter Estimates for Batch Size = 50: ", BS_50_est[1], BS_50_est[2])
+cat("\nParameter Estimates for Batch Size = 100: ", BS_100_est[1], BS_100_est[2])
+
+plot(sgd_10$Cost_hist, type = 'l', col = 'lightcoral', xlab = 'Epochs', ylab = 'Cost', main = 'Cost Curve for each Mini-batch Sizes', ylim = c(0, 300))
+lines(sgd_50$Cost_hist, col = 'cornflowerblue')
+lines(sgd_100$Cost_hist, col = 'forestgreen')
+legend("topright", legend = c("Batch = 10", "Batch = 50", "Batch = 100"), col = c('lightcoral', 'cornflowerblue', 'forestgreen'), lty = 1)
+
+```
+
+**Comments: based on the above plot the a batch size of 100 appears to be the best. The reason being is that it has the cost function is the lowest when using a batch size of 100 at epoch 20, and that the final parameters calculated using a batch size of 100 are closer to the true parameter values when compared to using a batch size of 10 and 50.**
+
+## 4. Learning parametric models by second order optimisation
+
+#### 💪 Problem 4.1
+
+::: callout-tip
+Because of the (conditional) independence assumption $$\nabla\nabla^\top \ell(\beta_0, \beta_1)=\sum_{i=1}^n \nabla\nabla^\top \log p(y_i|x_i,\beta_0, \beta_1),$$ and note that
+
+$$
+\nabla\nabla^\top \log p(y_i|x_i,\beta_0, \beta_1) = \begin{bmatrix}
+\frac{\partial^2}{\partial\beta_0^2}\log p(y_i|x_i,\beta_0, \beta_1) & \frac{\partial^2}{\partial\beta_0\partial\beta_1}\log p(y_i|x_i,\beta_0, \beta_1) \\
+\frac{\partial^2}{\partial\beta_1\partial\beta_0}\log p(y_i|x_i,\beta_0, \beta_1) & \frac{\partial^2}{\partial\beta_1^2}\log p(y_i|x_i,\beta_0, \beta_1)
+\end{bmatrix}.
+$$
+:::
+
+To derive the Hessian matrix we can use our results from 3.4 to find the second order partial derivatives with respect to each parameter:
+
+For $\partial\beta_0^2$ :
+
+$$
+\frac{\partial \ln p(y_i|x_i,\beta_0, \beta_1)}{\partial \beta_1^2} = \sum_{i=1}^{n}[- e^{(\beta_0 + \beta_1 * x_i)}]
+$$
+
+For $\partial\beta_1^2$:
+
+$$
+\frac{\partial \ln p(y_i|x_i,\beta_0, \beta_1)}{\partial \beta_1^2} = \sum_{i=1}^{n}[-x_i^2 * e^{(\beta_0 + \beta_1 * x_i)}]
+$$
+
+For $\partial\beta_0\partial\beta_1 = \partial\beta_1\partial\beta_0$:
+
+$$
+\frac{\partial \ln p(y_i|x_i,\beta_0, \beta_1)}{\partial \beta_1^2} = \frac{\partial \ln p(y_i|x_i,\beta_0, \beta_1)}{\partial \beta_1^2} = \sum_{i=1}^{n}[-x_i * e^{(\beta_0 + \beta_1 * x_i)}]
+$$
+
+#### 💪 Problem 4.2
+
+```{r}
+# Note: Fill in the NAs!
+Hess_log_dens_single_obs <- function(beta, y_i, X_i) {
+  phi11 <- -exp(beta[1] + beta[2] * X_i) 
+  phi12 <- -exp(beta[1] + beta[2] * X_i) * X_i 
+  phi21 <- phi12
+  phi22 <-  -exp(beta[1] + beta[2] * X_i) * X_i^2
+  return(matrix(c(phi11, phi21, phi12, phi22), nrow = 2, ncol = 2))
+}
+
+Hess_log_like <- function(beta, y, X) {
+  n <- length(y)
+  sum_Hess_log_like <- matrix(rep(0, 4), nrow = 2, ncol = 2)
+  for(i in 1:n) {
+    sum_Hess_log_like <- sum_Hess_log_like + Hess_log_dens_single_obs(beta, y[i], X[i ])
+  }
+  return(sum_Hess_log_like)
+}
+```
+
+#### 💪 Problem 4.3
+
+```{r}
+
+newton_descent = function (y, x, iterations, trust_region) {
+  
+  beta_0 <- 0.0
+  beta_1 <- 0.0
+  beta <- c(beta_0, beta_1)
+  n <- length(y)
+  
+  
+  cost_track <- c()
+  
+  for(i in 1:iterations){
+    
+    loss <- loss_func(y, x, beta[1], beta[2])
+    cost <- cost_func(n, loss)
+    cost_track[i] <- cost
+    
+    gradients <- grads(y, x, beta[1], beta[2])
+    hessian <- -(1/n) * Hess_log_like(beta, y, x)
+    v <- solve(hessian) %*% gradient_func(n, gradients)
+    learning_rate <- (trust_region / max(norm(v, type="2"), trust_region))
+    
+    beta <- beta - learning_rate * v
+    
+    
+  }
+  
+  return(
+    list(
+      Params = beta,
+      Cost_hist = cost_track))
+  
+  
+}
+
+test_newton <- newton_descent(y, x, 200, 1)
+
+newton_est <- test_newton$Params
+
+cat("\nParameter estimates using Newtons Method: ", newton_est[1], newton_est[2])
+
+plot(test_newton$Cost_hist, type = 'l', col = 'lightcoral', xlab = 'Iterations', ylab = 'Cost', main = 'Cost vs Iterations for Newtons Method', ylim = c(2,4))
+```
+
+**When comparing the rate of convergence between Newtons Method and SGD we can see that Newtons Method converges to the minimum much faster that SGD. By incorporating information from the Hessian of the cost function Newtons Method is able to converge quadratically to the minimum in just a few steps, SGD on the other hand requires multiple run-throughs of the training data set to achieve the same result**
+
+## 5. Learning parametric models using the optim function
+
+```{r}
+log_dens_Poisson <- function(beta, y, X) {
+  # log-density for each y_i, X_i
+  return(dpois(y, lambda = exp(X%*%beta),log = TRUE))
+}
+
+log_like_Poisson <- function(beta, y, X) {
+  # log-likelihood (for all observations)
+  return(sum(log_dens_Poisson(beta, y, X)))
+}
+
+```
+
+#### 💪 Problem 5.1
+
+```{r}
+
+cost_function = function(beta, y, X){
+   
+    return(-(1/n) * log_like_Poisson(beta, y, X))
+  
+}
+```
+
+#### 💪 Problem 5.2
+
+```{r}
+
+beta_start = c(0,2)
+n <- 1000
+
+X = as.matrix(cbind(1, x), ncol = 2)
+
+obj = optim(par = beta_start, fn=cost_function, y=y, X=X, method = "L-BFGS-B")
+
+obj$par #these are the true parameter values 
+
+```
+
+#### 💪 Problem 5.3
+
+```{r}
+load(file = "eBay_coins.RData")
+
+ebay_response = as.matrix(eBay_coins$nBids) #this is y
+ebay_features = as.matrix(select(eBay_coins, -nBids))#this is X
+beta_start = rep(1, ncol(ebay_features))
+
+betas = optim(par = beta_start, fn=cost_function, y=ebay_response,X=ebay_features)$par
+
+#PRINT OUT NAME AND OPTIMISED VALUE
+
+cat("\nConst: ", betas[1])
+cat("\nPowerSeller: ", betas[2])
+cat("\nVerifyID: ", betas[3])
+cat("\nSealed: ", betas[4])
+cat("\nMinBlem: ", betas[5])
+cat("\nMajBlem: ", betas[6])
+cat("\nLargNeg: ", betas[7])
+cat("\nLogBook: ", betas[8])
+cat("\nMinBidShare: ", betas[9])
+```
+
+#### 💪 Problem 5.4
+
+```{r}
+new_data = c(1, 1, 1, 1, 0, 0 ,0 ,1, 0.5)
+
+point_estimate = exp(t(new_data) %*% betas)
+
+cat("\nThe point estimate is ", point_estimate)
+```

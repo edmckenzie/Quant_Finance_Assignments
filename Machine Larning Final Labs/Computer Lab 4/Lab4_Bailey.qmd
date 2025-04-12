@@ -1,0 +1,537 @@
+---
+title: "Machine Learning: Mathematical Theory and Applications"
+subtitle: "Computer Lab 4"
+author: 
+  - Bailey Britton
+date: last-modified
+format: 
+  html:
+    self-contained: true
+toc: true
+execute:
+  error: false
+language: 
+  title-block-author-single: " "
+theme: Default
+title-block-banner-color: Primary
+editor: visual
+---
+
+## 3. Unsupervised Gaussian mixture models
+
+Parts of this question are used throughout question 4 as well
+
+```{r}
+rm(list=ls())
+cat("\014")
+```
+
+```{r}
+# this data is also used in the next question
+load(file = "C:/Users/baile/datasets/asb.RData")
+plot(Close ~ log(Volume), data = asb, col = "cornflowerblue", main = "ASB stock: Closing price vs log of trading volume")
+```
+
+```{r}
+mu1 <- -2
+sigma1 <- 0.5
+mu2 <- 4
+sigma2 <- 1.5
+pi1 <- 0.2
+pi2 <- 1 - pi1
+# Store in vectors:
+mu <- c(mu1, mu2)
+sigma <- c(sigma1, sigma2)
+pis <- c(pi1, pi2)
+n <- 1000
+y <- rep(NA, n)
+x <- rep(NA, n)
+
+for(i in 1:n){
+  # Simulate indicator with probability pi2 (1 - component 2, 0 - component 1)
+  y[i] <- rbinom(n = 1, size=1, prob = pis[2]) + 1
+  x[i] <- rnorm(n = 1, mean = mu[y[i]], sd = sigma[y[i]])
+}
+
+```
+
+## 4. Unsupervised learning via the EM algorithm
+
+The expectation-maximisation (EM) algorithm is a powerful algorithm to learn the parameters in unsupervised learning models. In addition, the EM algorithm gives us the conditional (on the training data) distribution of the class membership for each observation, which we can use for classification.
+
+The following function implements the EM algorithm. The implementation assumes a single feature and two classes.
+
+```{r}
+EM_GMM_M2 <- function(x, mu_start, sigma_start, pis_start, n_iter = 100) {
+  # Estimates the parameters in an unsupervised Gaussian mixture model with M = 2 classes. 
+  # Runs the EM algorithm for n_iter iterations. x is assumed univariate. 
+  # mu_start, sigma_start, pis_start are starting values.
+  stopifnot(sum(pis_start) == 1)
+  # Quantities to save
+  pis_all <-  matrix(NA, nrow = n_iter, ncol = 2)
+  mu_all <- matrix(NA, nrow = n_iter, ncol = 2)
+  sigma_all <- matrix(NA, nrow = n_iter, ncol = 2)
+  Q_all <- rep(NA, n_iter)
+  log_like_all <- rep(NA, n_iter)
+  
+  # Initialise
+  mu <- mu_start
+  sigma <- sigma_start
+  pis <- pis_start
+  n <- length(x)
+  W <- matrix(0, nrow = n, ncol = 2) # Unnormalised weights for each observation
+  log_pdf_class <- matrix(0, nrow = n, ncol = 2) # The log-likelihood of the two classes for each obs. To compute Q. 
+  for(j in 1:n_iter){
+    # Start EM steps
+    # E-step: Compute the expected log-likelihood Q
+    for(m in 1:2){
+      # The log-density for each class
+      log_pdf_class[, m] <- dnorm(x, mean = mu[m], sd = sigma[m], log = TRUE) + log(pis[m])
+      # Unnormalised weights
+      W[, m] <- pis[m]*dnorm(x, mean = mu[m], sd = sigma[m])
+    }
+    w <- W/rowSums(W) # Normalise weights
+    n_hat <- colSums(w) # Expected number of obs per class
+    Q <- sum(rowSums(w*log_pdf_class)) # Expected log-likelihood
+    
+    # M-step: Maximise Q. Closed form analytical solution in Gaussian mixture models
+    for(m in 1:2){
+      pis[m] <- n_hat[m]/n
+      mu[m] <- 1/n_hat[m]*sum(w[, m]*x)
+      sigma[m] <- sqrt(1/n_hat[m]*sum(w[, m]*(x - mu[m])^2))
+    }
+    # End EM steps. Save estimates, Q, and log-likelihood
+    pis_all[j, ] <- pis
+    mu_all[j, ] <- mu
+    sigma_all[j, ] <- sigma
+    Q_all[j] <- Q
+    # Compute log-likelihood at current parameter values
+    for(m in 1:2){
+      # Unnormalised weights
+      W[, m] <- pis[m]*dnorm(x, mean = mu[m], sd = sigma[m])
+    }
+    log_like_all[j] <-  sum(log(rowSums(W)))
+  } # End EM iterations
+  # Return everything as a list
+  return(list(pi_hat = pis, mu_hat = mu, sigma_hat = sigma, 
+              weights = W/rowSums(W), pis_all = pis_all, 
+              mu_all = mu_all, sigma_all = sigma_all, Q_all = Q_all, 
+              log_like_all = log_like_all))
+}
+```
+
+The following code uses the above function to estimate the parameters using our simulated data form Problem 3, performs some convergence checks, and plots the class posterior probability distribution for an observation. Note, that the log-likelihood is guaranteed to not decrease at any iteration.
+
+```{r}
+# Initial values
+pis_start <- c(0.5, 0.5)
+mu_start <- c(1, 4)
+sigma_start <- c(1, 3)
+n_iter <- 20
+EM_result <- EM_GMM_M2(x, mu_start, sigma_start, pis_start, n_iter = n_iter)
+
+# Visualise convergence for each parameters (adding starting value)
+matplot(0:n_iter, rbind(pis_start, EM_result$pis_all), main = 'pis', pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"), xlab = "Iteration", ylab = "pis", ylim = c(0, 1.5))
+legend("topright", legend = c("Class 1", "Class 2"), col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+matplot(0:n_iter, rbind(mu_start, EM_result$mu_all), main = 'mu', pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"), xlab = "Iteration", ylab = "mu", ylim = c(-3, 6))
+legend("topright", legend = c("Class 1", "Class 2"), col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+matplot(0:n_iter, rbind(sigma_start, EM_result$sigma_all), main = 'sigma', pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"), xlab = "Iteration", ylab = "sigma", ylim = c(0, 4))
+legend("topright", legend = c("Class 1", "Class 2"), col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+
+par(mfrow = c(1, 1))
+# Inspect convergence
+plot(EM_result$log_like_all, main = 'Log-likelihood', type = "l", col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+plot(EM_result$Q_all, main = 'Expected log-likelihood (Q)', type = "l", col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+
+print("True parameters (pi, mu, and sigma)")
+print(pis)
+print(mu)
+print(sigma)
+print("Estimated parameters (pi, mu, and sigma)")
+print(EM_result$pi_hat)
+print(EM_result$mu_hat)
+print(EM_result$sigma_hat)
+
+# Inspect the classification probabilities of observation 10
+ind <- 10
+barplot(names.arg = c("Class 1", "Class 2"), EM_result$weights[ind, ], col = "cornflowerblue", ylim = c(0, 1), main = paste("Class (posterior) probability observation ", ind, sep = ""))
+```
+
+#### 💪 Problem 4.1
+
+The likelihood in training Gaussian mixture models has M! maxima, where M is the number of classes and each maxima corresponds to a permutation of class labels on the same clusters. Hence, Gaussian mixture models are just as likely to label a cluster as '1', or '2' for example. In the above case, we'd expect label switching in 50% of cases since there are two classes, however, there is no label switching observed.
+
+The following code plots a (normalised) histogram of the insects data and highlights the feature values of observations 6, 244, and 421.
+
+```{r}
+# loading insects data
+load(file='C:/Users/baile/datasets/insects.RData')
+```
+
+```{r}
+hist(insects$length, col = "cornflowerblue", main = "Histogram of insects' lengths", prob = TRUE, xlab = "Length", ylim = c(0, 0.4), xlim = c(0, 14))
+abline(v = insects[6, ], lwd = 1.5, col = "lightcoral")
+abline(v = insects[244, ], lwd = 1.5, col = "purple")
+abline(v = insects[421, ], lwd = 1.5, col = "lightpink")
+legend("topright", legend = c("Obs 6", "Obs 244", "Obs 421"), col = c("lightcoral", "purple", "lightpink"), lwd = c(1.5, 1.5, 1.5))
+```
+
+#### 💪 Problem 4.2
+
+Use the `EM_GMM_M2()` function to estimate an unsupervised Gaussian mixture model for the insect data in Problem 3. Analyse the convergence. Compare the parameter estimates to those obtained by the function `normalmixEM()` in the `mixtools` package.
+
+The following code uses the `EM_GMM_M2()` function to estimate an unsupervised Gaussian mixture model for the insect data, and shows some convergence checks.
+
+```{r}
+# Initial values
+pis_start <- c(0.5, 0.5)
+mu_start <- c(2, 6)
+sigma_start <- c(1, 1)
+n_iter <- 30
+
+EM_result_insects <- EM_GMM_M2(insects$length, mu_start, sigma_start, pis_start,
+                               n_iter=n_iter)
+
+# Visualise convergence for each parameter
+matplot(0:n_iter, rbind(pis_start, EM_result_insects$pis_all), main = 'pis',
+        pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"),
+        xlab = "Iteration", ylab = "pis", ylim = c(0, 1.5))
+legend("topright", legend = c("Class 1", "Class 2"),
+       col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+
+matplot(0:n_iter, rbind(mu_start, EM_result_insects$mu_all), main = 'mu',
+        pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"),
+        xlab = "Iteration", ylab = "mu", ylim = c(-3, 12))
+legend("topright", legend = c("Class 1", "Class 2"),
+       col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+
+matplot(0:n_iter, rbind(sigma_start, EM_result_insects$sigma_all), main = 'sigma',
+        pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"),
+        xlab = "Iteration", ylab = "sigma", ylim = c(0, 4))
+legend("topright", legend = c("Class 1", "Class 2"),
+       col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+
+par(mfrow = c(1, 1))
+
+# Inspect convergence
+plot(EM_result_insects$log_like_all, main = 'Log-likelihood', type = "l",
+     col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+plot(EM_result_insects$Q_all, main = 'Expected log-likelihood (Q)', type = "l",
+     col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+
+print("Estimated parameters (pi, mu, and sigma)")
+print(EM_result_insects$pi_hat)
+print(EM_result_insects$mu_hat)
+print(EM_result_insects$sigma_hat)
+```
+
+The following code implements a similar EM algorithm via the `normalmixEM()` function in the `mixtools` package.
+
+```{r}
+library(mixtools)
+```
+
+```{r}
+# using normalmixEM
+EM_object_insects <- normalmixEM(insects$length, pis_start, mu_start, sigma_start)
+```
+
+```{r}
+print("Estimated parameters (pi, mu, and sigma)")
+print(EM_object_insects$lambda)
+print(EM_object_insects$mu)
+print(EM_object_insects$sigma)
+```
+
+For the insect data, the EM algorithm converges in 28 iterations, with no improvements in the log-likelihood for the last few computed iterations. Even so, the class 1 parameters settled quite quickly, while the class 2 parameters settled towards the end of the optimisation.
+
+The 'normalmixEM' function is a package implementation of the EM algorithm for GMMs. This is demonstrated by the similarity in estimated parameters, and convergence time for the 'normalmixEM' function, when compared to the implemented EM algorithm for the fitting of a GMM. The parameter estimates are almost identical between the two implementations, and the number of iterations for convergence is 28 for each.
+
+#### 💪 Problem 4.3
+
+The class posterior probabilities for insects 6, 244, and 421 are plotted below.
+
+```{r}
+# Inspect the classification probabilities of observation 10
+obs <- c(6, 244, 421)
+
+for (i in 1:3) {
+  barplot(names.arg = c("Class 1", "Class 2"), EM_result_insects$weights[obs[i], ],
+        col = "cornflowerblue", ylim = c(0, 1),
+        main = paste("Class (posterior) probability observation ", obs[i], sep = ""
+                     )
+        )
+}
+```
+
+The results are as expected, with observations 6, and 421 having more certain prediction in line with their proximity to the predicted gaussian distributions for each class. Observation 244, which sits on the border of the two distributions, has a posterior probability of around 0.25 for class 1, and 0.75 for class 2, showing the uncertainty in the predicted distribution it belongs to.
+
+#### 💪 Problem 4.4
+
+A general EM algorithm is implemented below, for more than 2 classes, and then used for modelling on the fish data.
+
+```{r}
+# rewrite EM algorithm with any number of components
+EM_GMM_general <- function(x, mu_start, sigma_start, pis_start, n_iter=100) {
+  stopifnot(sum(pis_start) == 1)
+  stopifnot(length(mu_start) == length(sigma_start))
+  stopifnot(length(mu_start) == length(pis_start))
+  
+  M <- length(mu_start) # number of components is length of provided vectors
+  
+  pis_all <- matrix(NA, nrow=n_iter, ncol=M)
+  mu_all <- matrix(NA, nrow=n_iter, ncol=M)
+  sigma_all <- matrix(NA, nrow=n_iter, ncol=M)
+  
+  Q_all <- rep(NA, n_iter)
+  log_like_all <- rep(NA, n_iter)
+  
+  # Initialise
+  mu <- mu_start
+  sigma <- sigma_start
+  pis <- pis_start
+  n <- length(x)
+  W <- matrix(0, nrow = n, ncol = M)
+  log_pdf_class <- matrix(0, nrow = n, ncol = M) # the log-likelihood to compute Q
+  
+  for (j in 1:n_iter) {
+    # Start EM steps
+    # E-step: Compute the expected log-likelihood Q
+    for (m in 1:M) {
+      log_pdf_class[, m] <- (dnorm(x, mean = mu[m], sd=sigma[m], log = TRUE) +
+                               log(pis[m]))
+      
+      W[, m] <- pis[m]*dnorm(x, mean = mu[m], sd = sigma[m])
+    }
+    w <- W/rowSums(W) # normalise weights
+    n_hat <- colSums(w)
+    Q <- sum(rowSums(w*log_pdf_class)) # expected log-likelihood
+    
+    # M-step: Maximise Q
+    for (m in 1:M) {
+      pis[m] <- n_hat[m] / n
+      mu[m] <- 1/n_hat[m]*sum(w[, m]*x)
+      sigma[m] <- sqrt(1/n_hat[m]*sum(w[, m]*(x - mu[m])^2))
+    }
+    # End EM steps, save estimates, Q, and log-likelihood
+    pis_all[j, ] <- pis
+    mu_all[j, ] <- mu
+    sigma_all[j, ] <- sigma
+    Q_all[j] <- Q
+    
+    # log-likelihood at current parameter values
+    for (m in 1:M) {
+      W[, m] <- pis[m]*dnorm(x, mean = mu[m], sd = sigma[m])
+    }
+    log_like_all[j] <- sum(log(rowSums(W)))
+  } # End Em iterations
+  # Return everything as a list
+  return(list(pi_hat = pis, mu_hat = mu, sigma_hat = sigma, 
+              weights = W/rowSums(W), pis_all = pis_all, 
+              mu_all = mu_all, sigma_all = sigma_all, Q_all = Q_all, 
+              log_like_all = log_like_all))
+}
+```
+
+```{r}
+# fish data
+load("C:/Users/baile/datasets/fish.RData")
+```
+
+```{r}
+# Take a look at the histogram first before implementing
+hist(fish$length, col = "cornflowerblue", breaks = 30, prob = TRUE,
+     main = "Histogram of fish lengths", xlab = "Length")
+```
+
+```{r}
+# 3 Classes
+mu_start_3classes <- c(23, 35, 60) # from histogram
+sigma_start_3classes <- c(1, 1, 1)
+pis_start_3classes <- c(0.2, 0.6, 0.2) # from proportions in histogram
+n_iter_3classes <- 60
+
+EM_fish_3classes <- EM_GMM_general(fish$length, mu_start_3classes,
+                                   sigma_start_3classes, pis_start_3classes,
+                                   n_iter=n_iter_3classes)
+
+# 4 classes
+mu_start_4classes <- c(23, 33, 39, 60) # accounting for skew in histogram
+sigma_start_4classes <- c(1, 1, 1, 1)
+pis_start_4classes <- c(0.1, 0.4, 0.4, 0.1)
+n_iter_4classes <- 60
+
+EM_fish_4classes <- EM_GMM_general(fish$length, mu_start_4classes,
+                                   sigma_start_4classes, pis_start_4classes,
+                                   n_iter=n_iter_4classes)
+```
+
+```{r}
+# Visualise convergence for each parameter (3 Classes)
+# Could create a function to do this to tidy notebook
+matplot(0:n_iter_3classes,
+        rbind(pis_start_3classes, EM_fish_3classes$pis_all), main='pis',
+        pch=c("o", "o", "o"), col=c("cornflowerblue", "lightcoral", "forestgreen"),
+        xlab = "Iteration", ylab = "pis")
+legend("topright", legend = c("Class 1", "Class 2", "Class 3"),
+       col=c("cornflowerblue", "lightcoral", "forestgreen"), pch=c("o", "o", "o"))
+
+matplot(0:n_iter_3classes,
+        rbind(mu_start_3classes, EM_fish_3classes$mu_all), main='mu',
+        pch=c("o", "o", "o"), col=c("cornflowerblue", "lightcoral", "forestgreen"),
+        xlab = "Iteration", ylab = "mu")
+legend("topright", legend = c("Class 1", "Class 2", "Class 3"),
+       col=c("cornflowerblue", "lightcoral", "forestgreen"), pch=c("o", "o", "o"))
+
+matplot(0:n_iter_3classes,
+        rbind(sigma_start_3classes, EM_fish_3classes$sigma_all), main='sigma',
+        pch=c("o", "o", "o"), col=c("cornflowerblue", "lightcoral", "forestgreen"),
+        xlab = "Iteration", ylab = "sigma")
+legend("topright", legend = c("Class 1", "Class 2", "Class 3"),
+       col=c("cornflowerblue", "lightcoral", "forestgreen"), pch=c("o", "o", "o"))
+
+par(mfrow = c(1, 1))
+
+# Inspect convergence
+plot(EM_fish_3classes$log_like_all, main = 'Log-likelihood', type = "l",
+     col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+plot(EM_fish_3classes$Q_all, main = 'Expected log-likelihood (Q)', type = "l",
+     col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+
+print("Estimated parameters (pi, mu, and sigma)")
+print(EM_fish_3classes$pi_hat)
+print(EM_fish_3classes$mu_hat)
+print(EM_fish_3classes$sigma_hat)
+```
+
+```{r}
+matplot(0:n_iter_4classes,
+        rbind(pis_start_4classes, EM_fish_4classes$pis_all), main='pis',
+        pch=c("o", "o", "o", "o"), xlab = "Iteration", ylab = "pis",
+        col=c("cornflowerblue", "lightcoral", "forestgreen", "purple"))
+legend("topright", legend = c("Class 1", "Class 2", "Class 3", "Class 4"),
+       col=c("cornflowerblue", "lightcoral", "forestgreen", "purple"),
+       pch=c("o", "o", "o", "o"))
+
+matplot(0:n_iter_4classes,
+        rbind(mu_start_4classes, EM_fish_4classes$mu_all), main='mu',
+        pch=c("o", "o", "o", "o"), xlab = "Iteration", ylab = "mu",
+        col=c("cornflowerblue", "lightcoral", "forestgreen", "purple"))
+legend("topright", legend = c("Class 1", "Class 2", "Class 3", "Class 4"),
+       col=c("cornflowerblue", "lightcoral", "forestgreen", "purple"),
+       pch=c("o", "o", "o", "o"))
+
+matplot(0:n_iter_4classes,
+        rbind(sigma_start_4classes, EM_fish_4classes$sigma_all), main='sigma',
+        pch=c("o", "o", "o", "o"), xlab = "Iteration", ylab = "sigma",
+        col=c("cornflowerblue", "lightcoral", "forestgreen", "purple"))
+legend("topright", legend = c("Class 1", "Class 2", "Class 3", "Class 4"),
+       col=c("cornflowerblue", "lightcoral", "forestgreen", "purple"),
+       pch=c("o", "o", "o", "o"))
+
+par(mfrow = c(1, 1))
+
+# Inspect convergence
+plot(EM_fish_4classes$log_like_all, main = 'Log-likelihood', type = "l",
+     col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+plot(EM_fish_4classes$Q_all, main = 'Expected log-likelihood (Q)', type = "l",
+     col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+
+print("Estimated parameters (pi, mu, and sigma)")
+print(EM_fish_4classes$pi_hat)
+print(EM_fish_4classes$mu_hat)
+print(EM_fish_4classes$sigma_hat)
+```
+
+#### 💪 Problem 4.5
+
+```{r}
+# first histogram for 3 class GMM
+par(mfrow=c(1, 2))
+
+n <- 1000
+sim_probs <- runif(n=1000) # using simulated probabilities for distribution
+x <- rep(NA, n)
+x2 <- rep(NA, n)
+
+for(i in 1:n){
+  if (sim_probs[i] < EM_fish_3classes$pi_hat[1]) {
+    x[i] <- rnorm(n = 1, mean = EM_fish_3classes$mu_hat[1],
+                  sd = EM_fish_3classes$sigma_hat[1])
+  }
+  else if (sim_probs[i] < EM_fish_3classes$pi_hat[1] + EM_fish_3classes$pi_hat[2]) {
+    x[i] <- rnorm(n = 1, mean = EM_fish_3classes$mu_hat[2],
+                  sd = EM_fish_3classes$sigma_hat[2])
+  }
+  else {
+    x[i] <- rnorm(n = 1, mean = EM_fish_3classes$mu_hat[3],
+                  sd = EM_fish_3classes$sigma_hat[3])
+  }
+}
+hist(x, xlab = "length", breaks = 30,  col = "cornflowerblue",
+     main = "Histogram for 3 Class GMM", prob = TRUE)
+
+# second histogram for 4 class GMM
+for(i in 1:n) {
+  if (sim_probs[i] < EM_fish_4classes$pi_hat[1]) {
+    x2[i] <- rnorm(n = 1, mean = EM_fish_4classes$mu_hat[1],
+                   sd = EM_fish_4classes$sigma_hat[1])
+  }
+  else if (sim_probs[i] < EM_fish_4classes$pi_hat[1] + EM_fish_4classes$pi_hat[2]) {
+    x2[i] <- rnorm(n = 1, mean = EM_fish_4classes$mu_hat[2],
+                   sd = EM_fish_4classes$sigma_hat[2])
+  }
+  else if (sim_probs[i] < (EM_fish_4classes$pi_hat[1] + EM_fish_4classes$pi_hat[2]
+                           + EM_fish_4classes$pi_hat[3])) {
+    x2[i] <- rnorm(n = 1, mean = EM_fish_4classes$mu_hat[3],
+                   sd = EM_fish_4classes$sigma_hat[3])
+  }
+  else {
+    x2[i] <- rnorm(n = 1, mean = EM_fish_4classes$mu_hat[4],
+                   sd = EM_fish_4classes$sigma_hat[4])
+  }
+}
+
+hist(x2, xlab = "length", breaks = 30, col = "cornflowerblue",
+     main = "Histogram for 4 class GMM", prob = TRUE)
+```
+
+The GMM model with 4 classes seems better for modelling the fish lengths, as it captures the distribution of the fish length data at the mode more accurately.
+
+#### 💪 Problem 4.6
+
+The following code implements an unsupervised multivariate Gaussian mixture model on the ASB stock data, and a scatter plot is outputted with predicted classes using the posterior class probabilities and a 0.5 probability threshold.
+
+```{r}
+# Training data
+X_train <- asb$Close
+X_train <- cbind(X_train, log(asb$Volume))
+colnames(X_train) <- c("Close", "log_vol")
+
+# Initialising starting parameters
+pis_start <- c(0.5, 0.5)
+mu_start <- list(c(18, 13.5), c(24, 13.5))
+sigma_start <- list(diag(1, 2), diag(1, 2))
+
+# using mvnormalmixEM for a Gaussian mixture model
+EM_result_asb <- mvnormalmixEM(X_train, lambda=pis_start,
+                               mu=mu_start, sigma=sigma_start)
+```
+
+```{r}
+# use the posterior class probabilities to plot predicted classes
+y_prob_hat <- EM_result_asb$posterior[, "comp.1"]
+
+X_train <- cbind(y_prob_hat, X_train)
+
+X_train_clust1 <- X_train[y_prob_hat > 0.5, ] # 0.5 prediction threshold
+X_train_clust2 <- X_train[y_prob_hat <= 0.5, ]
+
+plot(X_train_clust1[, "log_vol"], X_train_clust1[, "Close"], col="cornflowerblue",
+     xlab = "log(Volume)", ylab = "Close", ylim = c(14, 27),
+     main = "ASB Stock Close vs log(Volume) with Predicted Classes")
+lines(X_train_clust2[, "log_vol"], X_train_clust2[, "Close"], col="lightcoral",
+      type="p")
+legend("topright", legend = c("Class 1", "Class 2"),
+       col=c("cornflowerblue", "lightcoral"), pch=c("o", "o"))
+```

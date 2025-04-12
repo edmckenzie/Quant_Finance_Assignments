@@ -1,0 +1,687 @@
+---
+title: "Computer Lab 1"
+author: "Edward Mckenzie"
+format: 
+  html:
+    embed-resources: true
+editor: visual
+---
+
+## Load Library's and Data, Initial Plot
+
+```{r}
+rm(list=ls()) # Remove variables 
+cat("\014") # Clean workspace
+
+library(tidyverse)
+library(dplyr)
+library(splines)
+library(glmnet)
+library(timetk)
+library(caret)
+library(tree)
+library(rdist)
+
+# Q1 
+# Load Data
+
+bike_data <- read.csv('bike_rental_hourly.csv')
+
+bike_data$log_cnt <- log(bike_data$cnt)
+bike_data$hour <- bike_data$hr/23
+
+bike_data_train <- bike_data[bike_data$dteday >= as.Date("2011-02-01") & bike_data$dteday <= as.Date("2011-03-31"), ]
+bike_data_test <- bike_data[bike_data$dteday >= as.Date("2011-04-01") & bike_data$dteday <=  as.Date("2011-05-31"), ]
+
+y_test <- bike_data_test$log_cnt
+y_train <- bike_data_train$log_cnt
+p <- 2
+X_train <- cbind(1, poly(bike_data_train$hour, 2, raw = TRUE, simple = TRUE))
+beta_hat <- solve(t(X_train)%*%X_train)%*%t(X_train)%*%y_train
+
+# Predict in-sample and compute RMSE
+y_hat_train <- X_train%*%beta_hat 
+RMSE_train <- sqrt(sum((y_train - y_hat_train)^2)/length(y_train))
+
+# Predict out-of-sample and compute RMSE
+X_test <- cbind(1, poly(bike_data_test$hour, p, raw = TRUE, simple = TRUE))
+y_hat_test <- X_test%*%beta_hat
+RMSE_test <- sqrt(sum((y_test - y_hat_test)^2)/length(y_test))
+
+# Plot training data, test data, and fit on a fine grid.
+plot(log_cnt ~ hour, data = bike_data_train, col = "cornflowerblue", ylim = c(0, 8))
+lines(bike_data_test$hour, bike_data_test$log_cnt, type = "p", col = "lightcoral")
+hours_grid <- seq(0, 1, length.out = 1000)
+X_grid <- cbind(1, poly(hours_grid, p, raw = TRUE, simple = TRUE))
+y_hat_grid <- X_grid%*%beta_hat
+lines(hours_grid, y_hat_grid, lty = 1, col = "lightcoral")
+legend(x = "topleft", pch = c(1, 1, NA), lty = c(NA, NA, 1), col = c("cornflowerblue", "lightcoral",  "lightcoral"), legend=c("Train", "Test", "Fitted curve"))
+```
+
+## Q1
+
+#### 1.1
+
+```{r}
+y_test <- bike_data_test$log_cnt
+y_train <- bike_data_train$log_cnt
+p <- 8
+X_train <- cbind(1, poly(bike_data_train$hour, p, raw = TRUE, simple = TRUE))
+beta_hat <- solve(t(X_train)%*%X_train)%*%t(X_train)%*%y_train
+
+# Predict in-sample and compute RMSE
+y_hat_train <- X_train%*%beta_hat 
+RMSE_train <- sqrt(sum((y_train - y_hat_train)^2)/length(y_train))
+
+# Predict out-of-sample and compute RMSE
+X_test <- cbind(1, poly(bike_data_test$hour, p, raw = TRUE, simple = TRUE))
+y_hat_test <- X_test%*%beta_hat
+RMSE_test <- sqrt(sum((y_test - y_hat_test)^2)/length(y_test))
+
+# Plot training data, test data, and fit on a fine grid.
+plot(log_cnt ~ hour, data = bike_data_train, col = "cornflowerblue", ylim = c(0, 8), main = "8th Order Polynomial Regression")
+lines(bike_data_test$hour, bike_data_test$log_cnt, type = "p", col = "lightcoral")
+hours_grid <- seq(0, 1, length.out = 1000)
+X_grid <- cbind(1, poly(hours_grid, p, raw = TRUE, simple = TRUE))
+y_hat_grid <- X_grid%*%beta_hat
+lines(hours_grid, y_hat_grid, lty = 1, col = "lightcoral")
+legend(x = "topleft", pch = c(1, 1, NA), lty = c(NA, NA, 1), col = c("cornflowerblue", "lightcoral",  "lightcoral"), legend=c("Train", "Test", "Fitted curve"))
+```
+
+#### 1.2
+
+```{r}
+RMSE_train <- numeric(length = 10)
+RMSE_test <- numeric(length = 10)
+
+for (i in 1:10) {
+  p <- i
+  X_train <- cbind(1, poly(bike_data_train$hour, p, raw = TRUE, simple = TRUE))
+  beta_hat <- solve(t(X_train)%*%X_train)%*%t(X_train)%*%y_train
+  
+  # Predict in-sample and compute RMSE
+  y_hat_train <- X_train%*%beta_hat 
+  RMSE_train[i] <- sqrt(sum((y_train - y_hat_train)^2)/length(y_train))
+  
+  # Predict out-of-sample and compute RMSE
+  X_test <- cbind(1, poly(bike_data_test$hour, p, raw = TRUE, simple = TRUE))
+  y_hat_test <- X_test%*%beta_hat
+  RMSE_test[i] <- sqrt(sum((y_test - y_hat_test)^2)/length(y_test))
+  
+}
+
+plot(1:10, RMSE_train, type = "b", col = "cornflowerblue", xlab = "Polynomial Order", ylab = "RMSE",
+     main = "RMSE vs Polynomial Order", ylim=c(0,2))
+lines(1:10, RMSE_test, type = "b", col = "lightcoral")
+legend("topright", legend = c("Train RMSE", "Test RMSE"), col = c("cornflowerblue", "lightcoral"), lty = 1)
+
+```
+
+As we increase the order of the polynomial we can see both the training and the test error are declining, with the test error being consistently above the training error. The decrease in test error appears to plateau around order 8, meaning anything above this value would be an unnecessarily complex model and thus would be over fitting the training data. Therefore an 8th order polynomial regression seems to be a good fit for this example.
+
+#### 1.3
+
+```{r}
+y_test <- bike_data_test$log_cnt
+y_train <- bike_data_train$log_cnt
+p <- 8
+X_train <- cbind(1, poly(bike_data_train$hour, p, raw = TRUE, simple = TRUE))
+beta_hat <- solve(t(X_train)%*%X_train)%*%t(X_train)%*%y_train
+
+# Predict in-sample and compute RMSE
+y_hat_train <- X_train%*%beta_hat 
+RMSE_train <- sqrt(sum((y_train - y_hat_train)^2)/length(y_train))
+
+# Predict out-of-sample and compute RMSE
+X_test <- cbind(1, poly(bike_data_test$hour, p, raw = TRUE, simple = TRUE))
+y_hat_test <- X_test%*%beta_hat
+RMSE_test <- sqrt(sum((y_test - y_hat_test)^2)/length(y_test))
+
+#Nonparametric local regression
+
+loess_model <- loess(log_cnt ~ hour, data = bike_data_train)
+loess_test <- predict(loess_model, bike_data_test)
+loess_RMSE <- sqrt(sum((y_test - loess_test)^2)/length(y_test))
+
+local_plot <- predict(loess_model, data.frame(hour = seq(0, 1, length.out=1000), se = TRUE))
+
+# Plot training data, test data, and fit on a fine grid.
+plot(log_cnt ~ hour, data = bike_data_train, col = "cornflowerblue", ylim = c(0, 8))
+lines(bike_data_test$hour, bike_data_test$log_cnt, type = "p", col = "lightcoral")
+hours_grid <- seq(0, 1, length.out = 1000)
+X_grid <- cbind(1, poly(hours_grid, p, raw = TRUE, simple = TRUE))
+y_hat_grid <- X_grid%*%beta_hat
+lines(hours_grid, y_hat_grid, lty = 1, col = "lightcoral")
+lines(hours_grid, local_plot, lty = 1, col = "green")
+legend(x = "topleft", pch = c(1, 1, NA, NA), lty = c(NA, NA, 1, 1), col = c("cornflowerblue", "lightcoral",  "lightcoral", "green"), legend=c("Train", "Test", "Poly Fitted curve", "Smoothed Fit"))
+
+cat("The RMSE for Polynomial Regression is ", RMSE_test)
+cat("\nThe RMSE for Loess Fit is ", loess_RMSE)
+```
+
+When comparing results on the test data for each model we can see the RMSE for the Polynomial regression comes out to be: 1.021448 compared to 1.120946 for the locally fitted method. Therefore with the standard settings the polynomial regression outperforms the locally fitted model on the test data.
+
+## Q2
+
+```{r}
+set.seed(123)
+
+suppressMessages(library(splines))
+knots <- seq(0.05, 0.95, length.out = 25)
+X_train <- ns(bike_data_train$hour, knots = knots, intercept = TRUE)
+X_test <- ns(bike_data_test$hour, knots = knots, intercept = TRUE)
+beta_hat <- solve(t(X_train)%*%X_train)%*%t(X_train)%*%y_train
+
+# Plot training data, test data, and spline fit on a fine grid.
+plot(log_cnt ~ hour, data = bike_data_train, col = "cornflowerblue", ylim = c(0, 8))
+lines(bike_data_test$hour, bike_data_test$log_cnt, type = "p", col = "lightcoral")
+hours_grid <- seq(0, 1, length.out = 1000)
+X_grid <- ns(hours_grid, knots = knots, intercept = TRUE) # cbind(1, ns(hours_grid, knots = knots))
+y_hat_spline_grid <- X_grid%*%beta_hat
+lines(hours_grid, y_hat_spline_grid, lty = 1, col = "lightcoral")
+legend(x = "topleft", pch = c(1, 1, NA), lty = c(NA, NA, 1), col = c("cornflowerblue", "lightcoral",  "lightcoral"), legend=c("Train", "Test", "Spline"))
+
+```
+
+#### 2.1
+
+```{r}
+I_mat <- diag(ncol(X_train))
+
+objective_func <- function(lambda) sqrt(mean((y_test - X_test %*% (solve(t(X_train) %*% X_train + lambda * I_mat) %*% t(X_train) %*% y_train))^2))
+
+optimal_lam <- optim(par = 0.5, fn = objective_func, method = "L-BFGS-B", lower = 0, upper = 1)
+
+beta_hat_new = solve(t(X_train) %*% X_train + optimal_lam$par * I_mat) %*% t(X_train) %*% y_train
+
+plot(log_cnt ~ hour, data = bike_data_train, col = "cornflowerblue", ylim = c(0, 8), main = "Spline Fit with Optimal Lambda")
+lines(bike_data_test$hour, bike_data_test$log_cnt, type = "p", col = "lightcoral")
+hours_grid <- seq(0, 1, length.out = 1000)
+X_grid <- ns(hours_grid, knots = knots, intercept = TRUE) # cbind(1, ns(hours_grid, knots = knots))
+y_hat_spline_grid <- X_grid%*%beta_hat_new
+lines(hours_grid, y_hat_spline_grid, lty = 1, col = "lightcoral")
+legend(x = "topleft", pch = c(1, 1, NA), lty = c(NA, NA, 1), col = c("cornflowerblue", "lightcoral",  "lightcoral"), legend=c("Train", "Test", "Spline"))
+
+```
+
+#### 2.2
+
+```{r}
+# Q2.2
+
+ridge_model <- glmnet(X_train, y_train, alpha = 0)
+
+cv <- cv.glmnet(X_train, y_train, alpha = 0)
+
+optimal_lambda_ridge <- cv$lambda.1se
+
+ridge_train <- predict(ridge_model, s = optimal_lambda_ridge, newx = X_train)
+ridge_test <- predict(ridge_model, s = optimal_lambda_ridge, newx = X_test)
+
+ridge_train_plot <- predict(ridge_model, s = optimal_lambda_ridge, newx = X_grid)
+
+ridge_RMSE_train <- sqrt(sum((y_train - ridge_train)^2)/length(y_train))
+ridge_RMSE_predict <- sqrt(sum((y_test - ridge_test)^2)/length(y_test))
+
+plot(log_cnt ~ hour, data = bike_data_train, col = "cornflowerblue", ylim = c(0, 8), main = "Ridge Regression with 1 SE Optimal Lambda")
+lines(bike_data_test$hour, bike_data_test$log_cnt, type = "p", col = "lightcoral")
+hours_grid <- seq(0, 1, length.out = 1000)
+X_grid <- ns(hours_grid, knots = knots, intercept = TRUE) # cbind(1, ns(hours_grid, knots = knots))
+y_hat_spline_grid <- X_grid%*%beta_hat_new
+lines(hours_grid, ridge_train_plot, type = "l", col = "green")
+legend(x = "topleft", pch = c(1, 1, NA, NA), lty = c(NA, NA, 1, 1), col = c("cornflowerblue", "lightcoral", "green"), legend=c("Train", "Test" ,"Ridge Fit"))
+
+cat("The RMSE for the training set is: ", ridge_RMSE_train)
+cat("\nThe RMSE for test set is ", ridge_RMSE_predict)
+
+```
+
+#### 2.3
+
+```{r}
+# Q2.3
+
+min_optimal_lambda <- cv$lambda.min
+
+ridge_train_min <- predict(ridge_model, s = min_optimal_lambda, newx = X_train)
+ridge_test_min <- predict(ridge_model, s = min_optimal_lambda, newx = X_test)
+
+ridge_RMSE_train_min <- sqrt(sum((y_train - ridge_train_min)^2)/length(y_train))
+ridge_RMSE_predict_min <- sqrt(sum((y_test - ridge_test_min)^2)/length(y_test))
+
+cat("The RMSE for the training set is: ", ridge_RMSE_train_min)
+cat("\nThe RMSE for test set is ", ridge_RMSE_predict_min)
+```
+
+Previous results:
+
+```{r}
+cat("The RMSE for the training set is: ", ridge_RMSE_train)
+cat("\nThe RMSE for test set is ", ridge_RMSE_predict)
+```
+
+When comparing the model performance of the two models we can see that the minimum lambda model has the lower training error however the 1se lambda model has a slightly lower test error, meaning the simpler model has generalized better to the test data.
+
+#### 2.4
+
+```{r}
+lasso_model <- glmnet(X_train, y_train, alpha = 1)
+
+cv_lasso <- cv.glmnet(X_train, y_train, alpha = 1)
+
+optimal_lambda_lasso <- cv_lasso$lambda.1se
+
+lasso_train <- predict(lasso_model, s = optimal_lambda_lasso, newx = X_train)
+lasso_test <- predict(lasso_model, s = optimal_lambda_lasso, newx = X_test)
+
+lasso_RMSE_train <- sqrt(sum((y_train - lasso_train)^2)/length(y_train))
+lasso_RMSE_predict <- sqrt(sum((y_test - lasso_test)^2)/length(y_test))
+
+cat("The Lasso Model RMSE for the training set is: ", lasso_RMSE_train)
+cat("\nThe Lasso Model RMSE for test set is ", lasso_RMSE_predict)
+```
+
+Both the Lasso and Ridge models produce comparable performance on the training and data sets, with the Ridge regression model using a 1 standard deviation lambda input being the best performing model in terms of out of sample performance.
+
+## Q3
+
+#### 
+
+```{r}
+# One hot for weathersit
+one_hot_encode_weathersit <- model.matrix(~ as.factor(weathersit) - 1,data = bike_data)
+one_hot_encode_weathersit  <- one_hot_encode_weathersit[, -1] # Remove reference category
+colnames(one_hot_encode_weathersit) <- c('cloudy', 'light rain', 'heavy rain')
+bike_data <- cbind(bike_data, one_hot_encode_weathersit)
+
+# One hot for weekday
+one_hot_encode_weekday <- model.matrix(~ as.factor(weekday) - 1,data = bike_data)
+one_hot_encode_weekday  <- one_hot_encode_weekday[, -1] # Remove reference category
+colnames(one_hot_encode_weekday) <- c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+bike_data <- cbind(bike_data, one_hot_encode_weekday)
+
+# One hot for weekday
+one_hot_encode_season <- model.matrix(~ as.factor(season) - 1,data = bike_data)
+one_hot_encode_season  <- one_hot_encode_season[, -1] # Remove reference category
+colnames(one_hot_encode_season) <- c('Spring', 'Summer', 'Fall')
+bike_data <- cbind(bike_data, one_hot_encode_season)
+
+head(bike_data)
+
+```
+
+#### 3.1
+
+```{r}
+
+# Remove One Hot Encoded Variables
+design_data <- select(bike_data, -weathersit, -weekday, -season)
+  
+head(design_data)
+
+#Filter for Relevant Dates
+design_data_train = design_data[design_data$dteday >= as.Date("2011-01-01") & design_data$dteday <=  as.Date("2012-05-31"), ]
+design_data_test = design_data[design_data$dteday >= as.Date("2012-06-01") & design_data$dteday <=  as.Date("2012-12-31"), ]
+
+#Insert Spline
+spline_basis <- ns(design_data_train$hour, df = 10, intercept = FALSE)
+knots <- attr(spline_basis, "knots")
+spline_basis_test <- ns(design_data_test$hour, df = 10, knots = knots, intercept = FALSE)
+
+design_data_train$hour <- spline_basis
+design_data_test$hour <- spline_basis_test
+
+# Create Feature Filter
+features <- c("hour", "yr", "holiday", "workingday", "temp", "atemp", "hum", "windspeed","cloudy","light rain","heavy rain","Mon","Tue","Wed","Thu","Fri","Sat","Spring","Summer","Fall")
+
+design_matrix_train <- design_data_train[features]
+design_matrix_test <- design_data_test[features]
+
+X_train <- model.matrix(~ ., data = design_matrix_train)
+y_train <- design_data_train$log_cnt
+
+lasso_model <- glmnet(X_train, y_train, alpha = 1)
+
+cv_lasso <- cv.glmnet(X_train, y_train, alpha = 1)
+
+optimal_lambda_lasso <- cv_lasso$lambda.1se
+
+X_test <- model.matrix(~ ., data = design_matrix_test)
+y_test <- design_data_test$log_cnt
+
+lasso_train <- predict(lasso_model, s = optimal_lambda_lasso, newx = X_train)
+lasso_test <- predict(lasso_model, s = optimal_lambda_lasso, newx = X_test)
+
+lasso_RMSE_train <- sqrt(sum((y_train - lasso_train)^2)/length(y_train))
+lasso_RMSE_predict <- sqrt(sum((y_test - lasso_test)^2)/length(y_test))
+
+cat("The Lasso Model RMSE for the training set with extra features is: ", lasso_RMSE_train)
+cat("\nThe Lasso Model RMSE for test set with extra features is ", lasso_RMSE_predict)
+```
+
+#### 3.2
+
+```{r}
+plot(lasso_model, xvar = "lambda", main = "Lasso penalty\n\n", label = TRUE, ylim= c(-1,1.5))
+```
+
+```{r}
+coef(lasso_model, s = 0.5)
+```
+
+By plotting the coefficient values against the value of Lambda we can see that there are 3 features that go to 0 last looking at the right side of the plot. We can Access those coefficients via the coef function used above with a large enough lambda as the input, the resulting table tells us that hour1 (feature 1), hour9 (feature 9), and atemp (feature 15) are the most important features for the prescribed Lasso model.
+
+#### 3.3
+
+```{r}
+# Q3.3
+
+residuals_train <- y_train - lasso_train
+acf_residuals_train <- acf(residuals_train)
+```
+
+```{r}
+residuals_test <- y_test - lasso_test
+acf_residuals_test <- acf(residuals_test)
+```
+
+When plotting the autocorrelation function of both the training and test residuals we can see evidence of significant positive autocorrelation up to around lag 4. This is evidence of the independently and identically distributed errors condition being violated.
+
+## Q4
+
+#### 4.1
+
+```{r}
+response <- design_data_test[design_data_test$dteday >= as.Date("2012-12-25") & design_data_test$dteday <= as.Date("2012-12-31"),]
+response <- response$hr
+
+corresponding_values <- tail(lasso_test, length(response))
+
+plot(response, corresponding_values,  xlab = "Hour", ylab = "Fitted Values", main = "Actual vs. Fitted Values", col = "cornflowerblue", pch = 16)
+```
+
+#### 4.2
+
+```{r}
+
+lagged_training <- design_data_train %>%
+  tk_augment_lags(contains("log_cnt"), .lags = 1:4)
+
+lag_24 <- design_data_train %>%
+  tk_augment_lags(contains("log_cnt"), .lags = 24)
+
+lagged_training <- cbind(lagged_training, lag_24["log_cnt_lag24"])
+
+lagged_test <- design_data_test %>%
+  tk_augment_lags(contains("log_cnt"), .lags = 1:4)
+
+lag_24_test <- design_data_test %>%
+  tk_augment_lags(contains("log_cnt"), .lags = 24)
+
+lagged_test <- cbind(lagged_test, lag_24_test["log_cnt_lag24"])
+
+features <- c("hour", "yr", "holiday", "workingday", "temp", "atemp", "hum", "windspeed","cloudy","light rain","heavy rain","Mon","Tue","Wed","Thu","Fri","Sat","Spring","Summer","Fall", "log_cnt_lag1", "log_cnt_lag2", "log_cnt_lag3", "log_cnt_lag4", "log_cnt_lag24")
+
+lagged_train_matrix <- lagged_training[features]
+lagged_test_matrix <- lagged_test[features]
+
+lagged_train_matrix <- na.omit(lagged_train_matrix)
+lagged_test_matrix <- na.omit(lagged_test_matrix)
+
+X_train <- model.matrix(~ ., data = lagged_train_matrix)
+y_train <- design_data_train$log_cnt
+y_train_lagged <- y_train[25:length(y_train)]
+
+lagged_lasso_model <- glmnet(X_train, y_train_lagged, alpha = 1)
+
+cv_lagged_lasso <- cv.glmnet(X_train, y_train_lagged, alpha = 1)
+
+optimal_lagged_lasso <- cv_lagged_lasso$lambda.1se
+
+X_test <- model.matrix(~ ., data = lagged_test_matrix)
+y_test <- design_data_test$log_cnt
+y_test_lagged <- y_test[25:length(y_test)]
+
+lagged_lasso_train <- predict(lagged_lasso_model, s = optimal_lagged_lasso, newx = X_train)
+lagged_lasso_test <- predict(lagged_lasso_model, s = optimal_lagged_lasso, newx = X_test)
+
+lagged_lasso_RMSE_train <- sqrt(sum((y_train_lagged - lagged_lasso_train)^2)/length(y_train_lagged))
+lagged_lasso_RMSE_predict <- sqrt(sum((y_test_lagged - lagged_lasso_test)^2)/length(y_test_lagged))
+
+cat("The Lasso Model RMSE for the training set with lags is: ", lagged_lasso_RMSE_train)
+cat("\nThe Lasso Model RMSE for test set with extra lags is ", lagged_lasso_RMSE_predict)
+```
+
+```{r}
+lagged_residuals_train <- y_train_lagged - lagged_lasso_train
+lagged_acf_residuals_train <- acf(lagged_residuals_train)
+```
+
+```{r}
+lagged_residuals_test <- y_test_lagged - lagged_lasso_test
+lagged_acf_residuals_test <- acf(lagged_residuals_test)
+```
+
+When comparing the RMSE values and ACF plots for the lagged lasso model we can see the addition of lags in our model has led to a significant improvement in performance on both the training and test data, as well as reducing the autocorrelation between residuals leading to a much more adequate model.
+
+#### 4.3
+
+```{r}
+lagged_values <- tail(lagged_lasso_test, length(response))
+
+plot(response, corresponding_values,  xlab = "Actual Counts", ylab = "Fitted Values", 
+     main = "Actual vs. Fitted Values", col = "cornflowerblue", pch = 16)
+points(response, lagged_values, col = "lightcoral", pch = 16)
+legend(x = "bottomright", pch = c(16, 16), col = c("cornflowerblue", "lightcoral"), legend=c("Original Fit", "Lagged Fit"))
+
+```
+
+## Q5
+
+#### 5.1
+
+```{r}
+df <- as.data.frame(X_train)
+df_test <- as.data.frame(X_test)
+
+train_tree_df <- setNames(df, c("Intercept", paste0("Var", 1:34)))
+test_tree_df <- setNames(df_test, c("Intercept", paste0("Var", 1:34)))
+
+tree_model <- tree(y_train_lagged ~ ., train_tree_df)
+
+tree_predict <- predict(tree_model, newdata = test_tree_df)
+
+tree_RMSE <- sqrt(sum((y_test_lagged - tree_predict)^2)/length(y_test_lagged))
+
+cat("\nThe Tree Model RMSE for test set with extra lags is ", tree_RMSE)
+```
+
+#### 5.2
+
+```{r}
+plot(tree_model)
+text(tree_model, pretty = 0)
+```
+
+#### 5.3
+
+```{r}
+tree_values <- tail(tree_predict, length(response))
+
+plot(response, corresponding_values,  xlab = "Actual Counts", ylab = "Fitted Values", 
+     main = "Actual vs. Fitted Values", col = "cornflowerblue", pch = 16)
+points(response, lagged_values, col = "lightcoral", pch = 16)
+points(response, tree_values, col = "green", pch = 16)
+legend(x = "bottomright", pch = c(16, 16, 16), col = c("cornflowerblue", "lightcoral", "green"), legend=c("Original Fit", "Lagged Fit", "Tree Fit"))
+```
+
+## Q6
+
+```{r}
+rm(list=ls()) # Remove variables 
+cat("\014") # Clean workspace
+
+# Q6
+
+load(file = 'spam_ham_emails.RData')
+Spam_ham_emails[, -1] <- scale(Spam_ham_emails[, -1])
+Spam_ham_emails['spam'] <- as.factor(Spam_ham_emails['spam'] == 1) # Changing from 1->TRUE, 0->FALSE
+levels(Spam_ham_emails$spam) <- c("not spam", "spam")
+head(Spam_ham_emails)
+
+print(paste("Percentage of spam:", 100*mean(Spam_ham_emails$spam == "spam")))
+
+set.seed(1234)
+suppressMessages(library(caret))
+
+train_obs <- createDataPartition(y = Spam_ham_emails$spam, p = .75, list = FALSE)
+train <- Spam_ham_emails[train_obs, ]
+test <- Spam_ham_emails[-train_obs, ]
+# Confirm both training and test are balanced with respect to spam emails
+print(paste("Percentage of training data consisting of spam emails:", 
+            100*mean(train$spam == "spam")))
+
+print(paste("Percentage of test data consisting of spam emails:", 
+            100*mean(test$spam == "spam")))
+
+glm_fit <- glm(spam ~ ., family = binomial, data = train)
+
+y_prob_hat_test <- predict(glm_fit, newdata = test, type = "response")
+threshold <- 0.5 # Predict spam if probability > threshold
+y_hat_test <- as.factor(y_prob_hat_test > threshold)
+levels(y_hat_test) <- c("not spam", "spam")
+confusionMatrix(data = y_hat_test, test$spam, positive = "spam")
+```
+
+#### 6.1
+
+```{r}
+confusion_matrix <- table(y_hat_test, test$spam)
+print(confusion_matrix)
+```
+
+#### 6.2
+
+```{r}
+classification_accuracy <- (confusion_matrix[2,2] + confusion_matrix[1,1])/nrow(test)
+
+precision <- confusion_matrix[2,2] / (confusion_matrix[2,2] + confusion_matrix[2,1])
+
+recall <- confusion_matrix[2,2] / (confusion_matrix[2,2] + confusion_matrix[1,2])
+
+specificity <- confusion_matrix[1,1] / (confusion_matrix[1,1] + confusion_matrix[2,1])
+
+cat("\nThe Accuracy is:", classification_accuracy)
+cat("\nThe Precision is ", precision)
+cat("\nThe Sensitivity/Recall is ", recall)
+cat("\nThe Specificity is ", specificity)
+```
+
+### 6.3
+
+```{r}
+library(pROC)
+
+roc = roc(test$spam, y_prob_hat_test)
+
+plot(roc, print.auc = TRUE, auc.polygon = TRUE, auc.polygon.col = "cornflowerblue", print.thres = "best")
+```
+
+The ROC curve plots the true positive rate (or sensitivity) of the classifier against the false positive rate (1 - specificity) at different classification thresholds. The Area Under the Curve (AUC) of the ROC plot can be used as a criterion to measure the usefulness of the classification models ability/predictions, the closer to the upper left corner curve reaches the better the performance. A useless model would have an ROC curve that lies flat on the 45 degree line. In our case we have an AUC of 0.965, this means there is only a small overlap between the distributions of the TP and TN rates implied by our model and that our classifier has a high level of separability/performance.
+
+##  Q7
+
+#### 7.1
+
+```{r}
+tree_classifier <- tree(spam ~ ., data = train)
+
+tree_classifier_test <- predict(tree_classifier, newdata = test, type = "class")
+
+tree_result <- confusionMatrix(data = tree_classifier_test, test$spam, positive = "spam")
+
+confusionMatrix(data = tree_classifier_test, test$spam, positive = "spam")
+```
+
+#### 
+
+#### 7.2
+
+```{r}
+plot(tree_classifier)
+text(tree_classifier, pretty = 0)
+```
+
+## Q8
+
+#### 8.1
+
+```{r}
+train$spam <- ifelse(train$spam == "spam", 1, 0)
+test$spam <- ifelse(test$spam == "spam", 1, 0)
+
+normalized_train <- as.data.frame(apply(train[2:16], 2, normalize_vec))
+normalized_test <- as.data.frame(apply(test[2:16], 2, normalize_vec))
+
+y_train <- train$spam
+y_test <- test$spam
+
+knn_manual <- function(X_train, X_test, y_train, k) {
+  
+  distances <- cdist(X_train, X_test, metric = "euclidean")
+  y_pred <- c()
+  
+  for (i in 1:ncol(distances)) {
+    pred <- distances[,i]
+    
+    ordered_pred <- order(pred)
+    
+    k_nearest_indices <- ordered_pred[1:k]
+    
+    k_nearest_labels <- y_train[k_nearest_indices]
+    
+    prediction <- as.numeric(names(which.max(table(k_nearest_labels))))
+    
+    y_pred[i] <- prediction
+    
+  }
+  
+  return(y_pred)
+  
+}
+
+error_rate <- c()
+
+for (k in seq(1, 30, by = 2)) {
+  
+  y_pred <- knn_manual(normalized_train, normalized_test, y_train, k)
+  error_rate[k] <- mean(y_pred != y_test)
+  
+}
+
+plot(1:29, error_rate, type = "b", col = "cornflowerblue", xlab = "Value of K", ylab = "Missclassification Rate", main = "Performance as a Function of K")
+
+optimal_k <- which.min(error_rate)
+
+cat("\nThe Optimal K is ", optimal_k)
+```
+
+From the graph and from the optimal_k output we can see the value of K that minimizes the missclassification rate is 21 in this case
+
+#### 8.2
+
+```{r}
+y_pred_knn = knn_manual(normalized_train, normalized_test, y_train, optimal_k)  
+
+# Calculate misclassification rates
+missclassification_rate_knn = mean(y_pred_knn != y_test)
+missclassification_rate_logistic = 1 - classification_accuracy
+missclassification_rate_tree = 1 - tree_result$overall["Accuracy"]
+
+# Print the results
+cat("Misclassification Rate - KNN:", missclassification_rate_knn, "\n")
+cat("Misclassification Rate - Logistic:", missclassification_rate_logistic, "\n")
+cat("Misclassification Rate - Decision Tree:", missclassification_rate_tree, "\n")
+```
+
+When comparing the miss classification rate between the three models on the test data, we can see that the logistic regression model performs best and the KNN model performs worst.

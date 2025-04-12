@@ -1,0 +1,666 @@
+---
+title: "Machine Learning: Mathematical Theory and Applications"
+subtitle: "Computer lab 4"
+author: 
+  - Matias Quiroz
+date: last-modified
+format: 
+  html:
+    self-contained: true
+toc: true
+execute:
+  error: false
+language: 
+  title-block-author-single: " "
+theme: Default
+title-block-banner-color: Primary
+editor: visual
+---
+
+## 1. Linear discriminant analysis for cancer data
+
+```{r}
+rm(list=ls()) # Remove variables 
+cat("\014") # Clean workspace
+set.seed(1234)
+library(pROC)
+suppressMessages(library(caret))
+load(file = 'cancer_data_10features.RData')
+train_obs <- createDataPartition(y = cancer_data_10features$diagnosis, p = .80, list = FALSE)
+train <- cancer_data_10features[train_obs, 1:3]
+test <- cancer_data_10features[-train_obs, 1:3]
+# Confirm both training and test are balanced with respect to diagnosis (malign tumor)
+print(paste("Percentage of training data consisting of malign tumors:", 
+              100*mean(train$diagnosis == "M")))
+print(paste("Percentage of test data consisting of malign tumors:", 
+              100*mean(test$diagnosis == "M")))
+# Train and test for each tumor class
+ind_train_M <- train$diagnosis == "M"
+ind_test_M <- test$diagnosis == "M"
+plot(train[ind_train_M, 2], train[ind_train_M, 3], xlab = "Radius", ylab = "Texture", col = "cornflowerblue", xlim = c(5, 30),  ylim = c(5, 40))
+lines(train[!ind_train_M, 2], train[!ind_train_M, 3], col = "lightcoral", type = "p")
+lines(test[ind_test_M, 2], test[ind_test_M, 3], col = "cornflowerblue", type = "p", pch = "x")
+lines(test[!ind_test_M, 2], test[!ind_test_M, 3], col = "lightcoral", type = "p", pch = "x")
+legend("topright", legend = c("Malign train", "Benign train", "Malign test", "Benign test"), col = c("cornflowerblue", "lightcoral", "cornflowerblue", "lightcoral"), pch = c("o", "o", "x", "x"))
+```
+
+#### 💪 Problem 1.1
+
+Derive (analytically) $p(\mathbf{x})$ for the example above.
+
+$$
+\text{p(x) is given by : } p(x) = \sum_{m=1}^{2} p(x|y=m) \cdot Pr(y=m)
+$$
+
+$$
+Pr(y=m) \text{ are the marginal probabilities which are } \pi_1, \pi_2
+$$
+
+$$
+p(x|y = m) \text{ follows a normal distribution: }\\ p(x|y=m) = \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} e^{-\frac{1}{2}(x - \mu_m)^T \boldsymbol{\Sigma}^{-1} (x - \mu_m)}
+$$
+
+$$
+\text{ Starting with the first class } p(x|y=1) \text{ and substituting this into the equation } p(x|y=m) 
+$$
+$$
+\\p(x|y=1) = \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} e^{-\frac{1}{2}(x - \mu_m)^T \boldsymbol{\Sigma}^{-1} (x - \mu_m)}
+$$
+
+$$
+\text{ Multiplying the above by the prior probability } \pi_1 
+\\ \pi_1 \cdot p(x|y=1) = \pi_1 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} e^{-\frac{1}{2}(x - \mu_1)^T \boldsymbol{\Sigma}^{-1} (x - \mu_1)}
+$$
+
+$$
+\text{Doing the same for the 2nd class } \pi_2 \cdot p(x|y=2) = \pi_2 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} e^{-\frac{1}{2}(x - \mu_2)^T \boldsymbol{\Sigma}^{-1} (x - \mu_2)} 
+$$
+
+$$
+\text{Combining the two of the above together results in the marginal probability of x: }
+$$
+$$
+\\p(x) = \pi_1 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} e^{-\frac{1}{2}(x - \mu_1)^T \boldsymbol{\Sigma}^{-1} (x - \mu_1)} + \pi_2 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma}|^{1/2}} e^{-\frac{1}{2}(x - \mu_2)^T \boldsymbol{\Sigma}^{-1} (x - \mu_2)} 
+$$
+
+#### 💪 Problem 1.2
+
+Given the training data, estimate the parameters $\pi_m,\boldsymbol{\mu}_m$ for $m=1,2$, and $\boldsymbol{\Sigma}$. Predict the labels of the test data and plot them in a scatter plot with different colors to represent the different classes.
+
+```{r}
+
+#parameters we need to dete`rmine are for 2 classes: 1 being malign and 1 for benign 
+#for each class we need to predict the pi of class, mean of class and sigma matrix or pooled covariance matrix 
+#using machine learning a first course for engineers pages 260 and 261 to help with the below
+#class 1 can be for malign
+#class 2 can be fore benign
+
+parameter_estimation = function(train_data) {
+  number_obs = nrow(train_data)
+  number_malign_obs = sum(train_data$diagnosis == "M")
+  number_benign_obs= sum(train_data$diagnosis == "B")
+  
+  #calculating probabilities or pi
+  pi_malign = number_malign_obs / number_obs #probability of malign 
+  pi_benign = number_benign_obs / number_obs #probability of benign
+  
+  #calculating mean or mu of both radius and texture (or features)
+  #filtering the training data and calculating means
+  malign = train_data[train_data$diagnosis == "M", -1]
+  benign = train_data[train_data$diagnosis == "B", -1]
+  
+  mu_malign = colMeans(malign)
+  mu_benign = colMeans(benign)
+  
+  malign = as.matrix(malign)
+  benign = as.matrix(benign)
+  
+  #now calculating covariance matrix 
+  cov_malign = t(sweep(malign, 2, mu_malign, "-")) %*% sweep(malign, 2, mu_malign, "-")
+  cov_benign = t(sweep(benign, 2, mu_benign, "-")) %*% sweep(benign, 2, mu_benign, "-")
+  
+  cov_matrix = 1/number_obs * (cov_malign + cov_benign)
+  
+  parameters = list(pi_malign = pi_malign, pi_benign=  pi_benign, mu_malign = mu_malign, mu_benign = mu_benign, cov_matrix = cov_matrix)
+  
+  return(parameters)
+}
+
+predict_diagnosis = function(test_data, parameters) {
+  
+  cov_matrix_invers = solve(parameters$cov_matrix)
+    apply(test_data[, -1], 1, function(row) {
+      score_malign = t(row) %*% cov_matrix_invers %*% parameters$mu_malign - 0.5 * t(parameters$mu_malign) %*% cov_matrix_invers %*% parameters$mu_malign + log(parameters$pi_malign)
+      score_benign = t(row) %*% cov_matrix_invers %*% parameters$mu_benign - 0.5 * t(parameters$mu_benign) %*% cov_matrix_invers %*% parameters$mu_benign + log(parameters$pi_benign)
+      
+      return(ifelse(score_malign > score_benign, "M", "B"))
+    })
+}
+
+
+estimated_parameters = parameter_estimation(train)
+y_hat_test_linear = predict_diagnosis(test, estimated_parameters)
+
+cat("\nThe estimated pi for malign is: ", estimated_parameters$pi_malign)
+cat("\nThe estimated pi for benign is: ", estimated_parameters$pi_benign)
+cat("\nThe estimated mu for malign is: ", estimated_parameters$mu_malign)
+cat("\nThe estimated mu for benign is: ", estimated_parameters$mu_benign)
+cat("\nThe covariance matrix is: ", estimated_parameters$cov_matrix)
+
+ind_test_M = test$diagnosis == "M"
+ind_predicted_M = y_hat_test_linear == "M"
+
+plot(test[ind_test_M, 2], test[ind_test_M, 3], xlab = "Radius", ylab = "Texture",  col = "black", xlim = c(5, 30), ylim = c(5, 40), main = "Diagnosed vs Predicted for test data")
+lines(test[!ind_test_M, 2], test[!ind_test_M, 3], col = "green",type = "p")
+lines(test[ind_predicted_M, 2], test[ind_predicted_M, 3], col = "cornflowerblue", type = "p", pch = "x")
+lines(test[!ind_predicted_M, 2], test[!ind_predicted_M, 3], col = "lightcoral",type = "p", pch = "x")
+legend("topright", legend = c("Diagnosed Malign", "Diagnosed Benign", "Predicted Malign", "Predicted Benign"),  col = c("black", "green", "cornflowerblue", "lightcoral"), pch = c("o", "o", "x", "x"))
+
+```
+
+#### 💪 Problem 1.3
+
+Plot the decision bound of the classifier and the predictions of the test data from Problem 1.2 in the same plot.
+
+```{r}
+
+x1_grid <- seq(5, 30, length.out = 100)
+
+cov_matrix_inv = solve(estimated_parameters$cov_matrix)
+
+gamma_1 = (cov_matrix_inv %*% (estimated_parameters$mu_malign - estimated_parameters$mu_benign))[1] / (cov_matrix_inv %*% (estimated_parameters$mu_malign - estimated_parameters$mu_benign))[2]
+
+gamma_0 = 0.5 * (t(estimated_parameters$mu_benign) %*% cov_matrix_inv %*% estimated_parameters$mu_benign - t(estimated_parameters$mu_malign) %*% cov_matrix_inv %*% estimated_parameters$mu_malign) +
+  log(estimated_parameters$pi_malign) - log(estimated_parameters$pi_benign) - (cov_matrix_inv %*% (estimated_parameters$mu_malign + estimated_parameters$mu_benign))[1] * gamma_1
+
+#this extracts the scalar value from the matrix calc. gamm_0 is initially a matrix from the above calculation but it needs to be scalar
+gamma_0 = gamma_0[1,1]
+
+x2_grid = gamma_0 + gamma_1 * x1_grid
+
+plot(test[ind_test_M, 2], test[ind_test_M, 3], xlab = "Radius", ylab = "Texture",  col = "black", xlim = c(5, 30), ylim = c(5, 40), main = "Diagnosed vs Predicted for test data")
+lines(test[!ind_test_M, 2], test[!ind_test_M, 3], col = "green",type = "p")
+lines(test[ind_predicted_M, 2], test[ind_predicted_M, 3], col = "cornflowerblue", type = "p", pch = "x")
+lines(test[!ind_predicted_M, 2], test[!ind_predicted_M, 3], col = "lightcoral",type = "p", pch = "x")
+lines(x1_grid, x2_grid, col = "black", lty = 2, lwd = 2)
+legend("topright", legend = c("Diagnosed Malign", "Diagnosed Benign", "Predicted Malign", "Predicted Benign", "Decision Boundary"),  col = c("black", "green", "cornflowerblue", "lightcoral", "black"), pch = c("o", "o", "x", "x", "-"))
+
+```
+
+#### 💪 Problem 1.4
+
+Fit a logistic regression to the training data using the `glm()` function. Compare the results to the generative model in Problem 1.2. Comment on the results.
+
+```{r}
+glm_fit = glm(diagnosis ~ .,  family = binomial, data = train)
+summary(glm_fit)
+y_prob_hat_test = predict(glm_fit, newdata = test, type = "response")
+threshold = 0.5
+y_hat_test_logistic = as.factor(y_prob_hat_test > threshold)
+levels(y_hat_test_logistic) = c("B", "M")
+confusionMatrix(data = y_hat_test_logistic, test$diagnosis, positive = "M")
+
+y_hat_test_linear = as.factor(y_hat_test_linear)
+confusionMatrix(data = y_hat_test_linear, test$diagnosis, positive = "M")
+
+roc_log_regression = roc(test$diagnosis, y_prob_hat_test, levels=c("B", "M"))
+
+#just getting the scores/probabilities for the positive class 'Malign'
+predict_diagnosis_probs = function(test_data, parameters) {
+  
+  cov_matrix_invers = solve(parameters$cov_matrix)
+  
+    apply(test_data[, -1], 1, function(row) {
+          score_malign = t(row) %*% cov_matrix_invers %*% parameters$mu_malign - 0.5 * t(parameters$mu_malign) %*% cov_matrix_invers %*% parameters$mu_malign + log(parameters$pi_malign)
+
+    return(score_malign)
+    })
+}
+
+y_prob_hat_test_linear = predict_diagnosis_probs(test, estimated_parameters)
+roc_log_linear = roc(test$diagnosis, y_prob_hat_test_linear, levels=c("B", "M"))
+
+plot(roc_log_regression, print.auc = TRUE, auc.polygon = FALSE, auc.polygon.col = "cornflowerblue", print.thres = "best")
+lines(roc_log_linear, col="lightcoral", lwd=2)
+
+```
+
+**In problem 1.2, the accuracy of the model is 90.2%, with a sensitivity of 80.9% and specificity of 95.7%. The logistic regression model has an accuracy of 87.6%, sensitivity of 80.9% and specificity of 91.5%. Comparing these metrics it appears that the linear model is better at correctly identifying negative values i.e. benign relative to the logistic regression model. The logistic regression model has an accuracy of 87.6% which is worse then the linear model indicating that the linear model is better at predicting correct values both negative and positive. Finally, the linear model has a sensitivity of 80.9% vs 80.9% for the logistic model, each model has the same accuracy of predicting positive or malign values. Overall, I'd say the linear model is a better model then the logistic model as the linear model has higher accuracy and better at predicting negative values.**
+
+**Based on the ROC, the linear discriminant model (in lightcoral) is closest to the top left hand corner of the plot and this also indicates that it is a better model.**
+
+## 2. Quadratic discriminant analysis for cancer data
+
+#### 💪 Problem 2.1
+
+Derive (analytically) $p(\mathbf{x})$ with the new class conditional distribution above.
+
+$$
+\text{The difference between problem 1.1 and 2.1 is that each class in a quadratic discriminant analysis have their own covariance matrix.}
+$$
+
+$$
+\text{ For class 1, the conditional probability is: }
+$$
+
+$$
+Pr(y=1|x) = \pi_1 \cdot p(x|y=1) = \pi_1 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma_1}|^{1/2}} e^{-\frac{1}{2}(x - \mu_1)^T \boldsymbol{\Sigma_1}^{-1} (x - \mu_1)}
+$$
+
+$$
+\text{For class 2, the conditional probability is: }
+$$
+
+$$
+Pr(y=2|x) = \pi_2 \cdot p(x|y=2) = \pi_2 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma_2}|^{1/2}} e^{-\frac{1}{2}(x - \mu_2)^T \boldsymbol{\Sigma_2}^{-1} (x - \mu_2)}
+$$
+
+$$
+\text{Combining the two of the above together results in the marginal probability of x:}
+$$
+
+$$
+p(x) = \pi_1 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma_1}|^{1/2}} e^{-\frac{1}{2}(x - \mu_1)^T \boldsymbol{\Sigma_1}^{-1} (x - \mu_1)} + \pi_2 \cdot \frac{1}{(2\pi)^{d/2}|\boldsymbol{\Sigma_2}|^{1/2}} e^{-\frac{1}{2}(x - \mu_2)^T \boldsymbol{\Sigma_2}^{-1} (x - \mu_2)}
+$$
+
+#### 💪 Problem 2.2
+
+Given the training data, estimate the parameters $\pi_m,\boldsymbol{\mu}_m$, and $\boldsymbol{\Sigma}_m$ for $m=1,2$. Predict the labels of the test data and plot them in a scatter plot with different colors to represent the different classes.
+
+```{r}
+
+pi_malign = estimated_parameters$pi_malign
+pi_benign = estimated_parameters$pi_benign
+mu_malign = estimated_parameters$mu_malign
+mu_benign = estimated_parameters$mu_benign
+
+covariance_benign = cov(train[train$diagnosis == "B", ][, c("radius", "texture")])
+covariance_malign = cov(train[train$diagnosis == "M", ][, c("radius", "texture")])
+
+cat("\nThe estimated pi for malign is: ", pi_malign)
+cat("\nThe estimated pi for benign is: ", pi_benign)
+cat("\nThe estimated mu for malign is: ", mu_malign)
+cat("\nThe estimated mu for benign is: ", mu_benign)
+cat("\nThe covariance matrix for benign is: ", covariance_benign)
+cat("\nThe covariance matrix for malign is: ", covariance_malign)
+
+
+predict_quadratic_analysis = function(test_data, pi_malign, mu_malign, covariance_malign, pi_benign, mu_benign, covariance_benign) {
+  
+  covariance_malign_invers = solve(covariance_malign)
+  covariance_benign_invers = solve(covariance_benign)
+  
+  apply(test_data[, -1], 1, function(row) {
+    
+    score_malign = -0.5 * log(det(covariance_malign)) - 0.5 * t(row - mu_malign) %*% covariance_malign_invers %*% (row - mu_malign) + log(pi_malign)
+    score_benign = -0.5 * log(det(covariance_benign)) - 0.5 * t(row - mu_benign) %*% covariance_benign_invers %*% (row - mu_benign) + log(pi_benign)
+    return(ifelse(score_malign > score_benign, "M", "B"))
+  })
+}
+
+y_hat_test_quadratic = predict_quadratic_analysis(test, pi_malign, mu_malign, covariance_malign, pi_benign, mu_benign, covariance_benign)
+
+  
+ind_test_M = test$diagnosis == "M"
+ind_predicted_M = y_hat_test_quadratic == "M"
+
+plot(test[ind_test_M, 2], test[ind_test_M, 3], xlab = "Radius", ylab = "Texture",  col = "black", xlim = c(5, 30), ylim = c(5, 40), main = "Diagnosed vs Predicted for test data")
+lines(test[!ind_test_M, 2], test[!ind_test_M, 3], col = "green",type = "p")
+lines(test[ind_predicted_M, 2], test[ind_predicted_M, 3], col = "cornflowerblue", type = "p", pch = "x")
+lines(test[!ind_predicted_M, 2], test[!ind_predicted_M, 3], col = "lightcoral",type = "p", pch = "x")
+legend("topright", legend = c("Diagnosed Malign", "Diagnosed Benign", "Predicted Malign", "Predicted Benign"),  col = c("black", "green", "cornflowerblue", "lightcoral"), pch = c("o", "o", "x", "x"))
+
+```
+
+#### 💪 Problem 2.3
+
+Compare the quadratic discriminant classifier to the linear discriminant and logistic classifiers from Problem 1. Discuss the results.
+
+```{r}
+confusionMatrix(data = as.factor(y_hat_test_linear), test$diagnosis, positive = "M")
+confusionMatrix(data = as.factor(y_hat_test_quadratic), test$diagnosis, positive = "M")
+confusionMatrix(data = y_hat_test_logistic, test$diagnosis, positive = "M")
+
+predict_quadratic_probs = function(test_data, pi_malign, mu_malign, covariance_malign) {
+  
+  covariance_malign_invers = solve(covariance_malign)
+
+  apply(test_data[, -1], 1, function(row) {
+    
+    score_malign = -0.5 * log(det(covariance_malign)) - 0.5 * t(row - mu_malign) %*% covariance_malign_invers %*% (row - mu_malign) + log(pi_malign)
+    return(score_malign)
+  })
+}
+
+y_prob_hat_test_quadratic = predict_quadratic_probs(test, pi_malign, mu_malign, covariance_malign)
+roc_quadratic = roc(test$diagnosis, y_prob_hat_test_quadratic, levels=c("B", "M"))
+
+plot(roc_log_regression, print.auc = TRUE, auc.polygon = FALSE, auc.polygon.col = "cornflowerblue", print.thres = "best")
+lines(roc_log_linear, col="lightcoral", lwd=2)
+lines(roc_quadratic, col="green", lwd=2)
+
+```
+
+**The linear model has an accuracy of 90.27%, quadratic 87.61% and logistic 87.61%. The linear model has the highest accuracy. The linear model has a sensitivity value of 80.95%, quadratic 80.95% and logistic 80.95%, all three models have the same sensitivity the linear model has a specificity of 95.77%, the logistic and quadratic 91.55%**
+
+**Overall, it is interesting to note that the logistic and quadratic models have very similar results where they are exactly the same in every measurement indicating that they are very similar models. Overall, the linear model is the best out of the three as it outperforms in accuracy and specificity.**
+
+**Looking at the ROC curve, the quadratic discriminant model is the worst of the three as it is the furthest from the left hand corner.**
+
+#### 💪 Problem 2.4
+
+A doctor contacts you and says she has a patient whose digitised image has the features `radius=13.20` and `texture=19.22`. Use your best classifier from Problem 2.3 to provide the doctor with some advice.
+
+```{r}
+new_data = data.frame(diagnosis = "", radius = 13.20, texture = 19.22)
+
+predicted_diagnosis = predict_diagnosis(new_data, estimated_parameters)
+
+if(predicted_diagnosis == "M") {
+  advice = "Malignant diagnosis"
+} else {
+  advice = "Benign diagnosis"
+}
+
+cat("Based on the data the patient diagnosis is: ", advice)
+
+```
+
+## 3. Unsupervised Gaussian mixture models
+
+Both Problems 1 and 2 above are so-called supervised learning methods because the class labels are observed (we know the status of the tumor). In many problems, we do not observe the classes and we might not even know if the classes are interpretable as in the example above (the classes are interpreted as the severity of the tumor). Let us consider two examples to further illustrate what we mean with interpretability.
+
+The first example concerns a dataset that contains measurements of the lengths (in mm) of 1000 insects of a certain species. The data is stored in the file `insects.Rdata`, which can be downloaded from the Canvas page of the course. The following code reads in and visualises the data.
+
+```{r}
+rm(list=ls()) # Remove variables
+cat("\014") # Clean workspace
+load(file = 'insects.RData')
+hist(insects$length, xlab = "Length (in mm)", ylab = "Counts", col = "cornflowerblue", main = "Histogram of the lengths of insects")
+```
+
+We see that there seems to be two groups of insects, the first group with lengths about $\approx1\text{-}6$mm and the second group with lengths about $\approx7\text{-}11$mm. Note that there are no other variables available in the dataset, but a plausible explanation that the data cluster this way is a second variable --- *sex*. This is what we mean with cluster interpretability.
+
+The next example concerns the relationship between the closing price and the trading volume (in log-scale) for the Associated Banc-Corp (ASB) stock that is traded in the New York Stock Exchange (NYSE). The data are on a daily frequency and cover the period 2014-12-26 to 2017-11-10. The data are stored in the file `asb.Rdata`, which can be downloaded from the Canvas page of the course[^1]. The following code reads in and visualises the data.
+
+[^1]: The original data come from this [source](https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs).
+
+```{r}
+load(file = 'asb.RData')
+plot(Close ~ log(Volume), data = asb, col = "cornflowerblue", main = "ASB stock: Closing price vs log of trading volume")
+```
+
+The data seem to be divided into two clusters. The following code plots a time series plot of the closing price.
+
+```{r}
+date <- as.Date(asb$Date)
+Close <- asb$Close
+plot(date, Close, col = "cornflowerblue",type = "l", main = "ASB stock: Closing prices during 2014-12-26 to 2017-11-10")
+```
+
+#### 💪 Problem 3.1
+
+Give a possible interpretation of the two clusters.
+
+Further insights of the unsupervised Gaussian mixture model can be gained by understanding the data generating process via simulation. Assume we have only one feature (like the insects example) and two classes. Let
+
+$$x|y=m, \mu_m, \sigma^2_m \sim \mathcal{N}(\mu_m, \sigma^2_m),\,\,m=1,2,$$
+
+with $\mu_1 = -2,\sigma_1=0.5, \mu_2=4, \sigma_2=1.5$. Assume further that $\pi_1=\Pr(y=1) = 0.2$ and $\pi_2= \Pr(y=2) = 0.8$.
+
+#### 💪 Problem 3.2
+
+Derive (analytically) $p(x)$ for the example above.
+
+The following code simulates $n=1000$ observations from the specified mixture model above. It uses a for-loop for pedagogical reasons. Some explanation of the code follows.
+
+```{r}
+mu1 <- -2
+sigma1 <- 0.5
+mu2 <- 4
+sigma2 <- 1.5
+pi1 <- 0.2
+pi2 <- 1 - pi1
+# Store in vectors:
+mu <- c(mu1, mu2)
+sigma <- c(sigma1, sigma2)
+pis <- c(pi1, pi2)
+n <- 1000
+y <- rep(NA, n)
+x <- rep(NA, n)
+
+for(i in 1:n){
+  # Simulate indicator with probability pi2 (1 - component 2, 0 - component 1)
+  y[i] <- rbinom(n = 1, size=1, prob = pis[2]) + 1
+  x[i] <- rnorm(n = 1, mean = mu[y[i]], sd = sigma[y[i]])
+}
+
+# Sanity check: Confirm the marginal class probabilities are pi1 and pi2 (approx)
+print(paste("Estimated class 1 marginal probability: ", mean(y == 1), ". True: ", pis[1], sep = ""))
+print(paste("Estimated class 2 marginal probability: ", mean(y == 2), ". True: ", pis[2], sep = ""))
+# Normalised histogram
+hist(x, xlab = "x", col = "cornflowerblue", main = "Normalised histogram of the simulated x", prob = TRUE)
+```
+
+Most of the code above is obvious except that within the for-loop. The function `rbinom()` simulates `n=1` random number from a binomial distribution with `size=1` trials and success probability `prob=pis[2]`. This is just a Bernoulli variable that takes on the value 0 and 1 with, respectively, probabilities $\pi_1$ and $\pi_2$. We add 1 to this to make the outcome $m=1,2$ (instead of $m=0,1$). The next line of code simulates from a normal distribution, where the mean and variance depend on the class membership of the observation (stored in `y[i]`).
+
+Plotting a (normalised) histogram of the simulated data (`x`) is an empirical representation of the marginal density $p(x)$ you derived in Problem 3.2. By comparing them, we can ensure that the simulation above is correct (and that the expression you derived for $p(x)$ is correct!).
+
+#### 💪 Problem 3.3
+
+Plot the $p(x)$ you derived in Problem 3.2 in the same figure as a (normalised) histogram.
+
+::: callout-tip
+Create a fine grid of $x$ values (e.g. `x_grid<-seq(-6,10,length.out=1000)`) and evaluate $p(x)$ on the grid. Make sure to set `prob=TRUE` in the `hist()` function (so the plots are in the same scale). Note that with a few bins it is hard to evaluate the quality of the approximation. Try setting the argument `breaks=30` in the `hist()` function.
+:::
+
+## 4. Unsupervised learning via the EM algorithm
+
+The expectation-maximisation (EM) algorithm is a powerful algorithm to learn the parameters in unsupervised learning models. In addition, the EM algorithm gives us the conditional (on the training data) distribution of the class membership for each observation, which we can use for classification. We will first learn how to implement the EM algorithm for the unsupervised Gaussian mixture model for a single feature $x$ and two classes, which we studied in Problem 3. We stress that the difference compared to Problems 1 and 2 (which also had Gaussian components) is that the labels are not observed in this problem.
+
+The following function implements the EM algorithm. The implementation assumes a single feature and two classes, i.e. $x\in\mathbb{R}$ and $M=2$.
+
+```{r}
+EM_GMM_M2 <- function(x, mu_start, sigma_start, pis_start, n_iter = 100) {
+  # Estimates the parameters in an unsupervised Gaussian mixture model with M = 2 classes. 
+  # Runs the EM algorithm for n_iter iterations. x is assumed univariate. 
+  # mu_start, sigma_start, pis_start are starting values.
+  stopifnot(sum(pis_start) == 1)
+  # Quantities to save
+  pis_all <-  matrix(NA, nrow = n_iter, ncol = 2)
+  mu_all <- matrix(NA, nrow = n_iter, ncol = 2)
+  sigma_all <- matrix(NA, nrow = n_iter, ncol = 2)
+  Q_all <- rep(NA, n_iter)
+  log_like_all <- rep(NA, n_iter)
+  
+  # Initialise
+  mu <- mu_start
+  sigma <- sigma_start
+  pis <- pis_start
+  n <- length(x)
+  W <- matrix(0, nrow = n, ncol = 2) # Unnormalised weights for each observation
+  log_pdf_class <- matrix(0, nrow = n, ncol = 2) # The log-likelihood of the two classes for each obs. To compute Q. 
+  for(j in 1:n_iter){
+    # Start EM steps
+    # E-step: Compute the expected log-likelihood Q
+    for(m in 1:2){
+      # The log-density for each class
+      log_pdf_class[, m] <- dnorm(x, mean = mu[m], sd = sigma[m], log = TRUE) + log(pis[m])
+      # Unnormalised weights
+      W[, m] <- pis[m]*dnorm(x, mean = mu[m], sd = sigma[m])
+    }
+    w <- W/rowSums(W) # Normalise weights
+    n_hat <- colSums(w) # Expected number of obs per class
+    Q <- sum(rowSums(w*log_pdf_class)) # Expected log-likelihood
+    
+    # M-step: Maximise Q. Closed form analytical solution in Gaussian mixture models
+    for(m in 1:2){
+      pis[m] <- n_hat[m]/n
+      mu[m] <- 1/n_hat[m]*sum(w[, m]*x)
+      sigma[m] <- sqrt(1/n_hat[m]*sum(w[, m]*(x - mu[m])^2))
+    }
+    # End EM steps. Save estimates, Q, and log-likelihood
+    pis_all[j, ] <- pis
+    mu_all[j, ] <- mu
+    sigma_all[j, ] <- sigma
+    Q_all[j] <- Q
+    # Compute log-likelihood at current parameter values
+    for(m in 1:2){
+      # Unnormalised weights
+      W[, m] <- pis[m]*dnorm(x, mean = mu[m], sd = sigma[m])
+    }
+    log_like_all[j] <-  sum(log(rowSums(W)))
+  } # End EM iterations
+  # Return everything as a list
+  return(list(pi_hat = pis, mu_hat = mu, sigma_hat = sigma, 
+              weights = W/rowSums(W), pis_all = pis_all, 
+              mu_all = mu_all, sigma_all = sigma_all, Q_all = Q_all, 
+              log_like_all = log_like_all))
+}
+```
+
+The log-likelihood is guaranteed to not decrease at any iteration, which makes the variable `log_like_all` above useful for debugging. The following code uses the function above to estimate the parameters using our simulated data from Problem 3, performs some convergence checks, and plots the class posterior probability distribution for an observation.
+
+```{r}
+# Initial values
+pis_start <- c(0.5, 0.5)
+mu_start <- c(1, 4)
+sigma_start <- c(1, 3)
+n_iter <- 20
+EM_result <- EM_GMM_M2(x, mu_start, sigma_start, pis_start, n_iter = n_iter)
+
+# Visualise convergence for each parameters (adding starting value)
+matplot(0:n_iter, rbind(pis_start, EM_result$pis_all), main = 'pis', pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"), xlab = "Iteration", ylab = "pis", ylim = c(0, 1.5))
+legend("topright", legend = c("Class 1", "Class 2"), col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+matplot(0:n_iter, rbind(mu_start, EM_result$mu_all), main = 'mu', pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"), xlab = "Iteration", ylab = "mu", ylim = c(-3, 6))
+legend("topright", legend = c("Class 1", "Class 2"), col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+matplot(0:n_iter, rbind(sigma_start, EM_result$sigma_all), main = 'sigma', pch = c("o", "o"), col = c("cornflowerblue", "lightcoral"), xlab = "Iteration", ylab = "sigma", ylim = c(0, 4))
+legend("topright", legend = c("Class 1", "Class 2"), col = c("cornflowerblue", "lightcoral"), pch = c("o", "o"))
+
+par(mfrow = c(1, 1))
+# Inspect convergence
+plot(EM_result$log_like_all, main = 'Log-likelihood', type = "l", col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+plot(EM_result$Q_all, main = 'Expected log-likelihood (Q)', type = "l", col = "cornflowerblue", xlab = "Iteration", ylab = "Log-likelihood")
+
+print("True parameters (pi, mu, and sigma)")
+print(pis)
+print(mu)
+print(sigma)
+print("Estimated parameters (pi, mu, and sigma)")
+print(EM_result$pi_hat)
+print(EM_result$mu_hat)
+print(EM_result$sigma_hat)
+
+# Inspect the classification probabilities of observation 10
+ind <- 10
+barplot(names.arg = c("Class 1", "Class 2"), EM_result$weights[ind, ], col = "cornflowerblue", ylim = c(0, 1), main = paste("Class (posterior) probability observation ", ind, sep = ""))
+```
+
+#### 💪 Problem 4.1
+
+Explain the label-switching problem when estimating unsupervised Gaussian mixture models. Do you observe label-switching above?
+
+The next problem uses the EM algorithm to estimate an unsupervised Gaussian mixture model for the insects data. In particular, the model will be used to classify three insects: observations 6, 244, and 421 in `insects.Rdata`. The following code plots a (normalised) histogram of the data and highlights the feature values of these three observations.
+
+```{r}
+hist(insects$length, col = "cornflowerblue", main = "Histogram of insects' lengths", prob = TRUE, xlab = "Length", ylim = c(0, 0.4), xlim = c(0, 14))
+abline(v = insects[6, ], lwd = 1.5, col = "lightcoral")
+abline(v = insects[244, ], lwd = 1.5, col = "purple")
+abline(v = insects[421, ], lwd = 1.5, col = "lightpink")
+legend("topright", legend = c("Obs 6", "Obs 244", "Obs 421"), col = c("lightcoral", "purple", "lightpink"), lwd = c(1.5, 1.5, 1.5))
+```
+
+#### 💪 Problem 4.2
+
+Use the `EM_GMM_M2()` function to estimate an unsupervised Gaussian mixture model for the insect data in Problem 3. Analyse the convergence. Compare the parameter estimates to those obtained by the function `normalmixEM()` in the `mixtools` package.
+
+::: callout-tip
+The EM algorithm is sensitive to starting values. Try a few different starting values and pick the solution that gives you the highest log-likelihood value. You might have to increase the number of iterations if you have not achieved convergence yet. Finally, recall that the log-likelihood is guaranteed to not decrease at each iteration.
+:::
+
+#### 💪 Problem 4.3
+
+Plot the class posterior probabilities for insects 6, 244, and 421 with the model estimated in Problem 4.2. Are the results as expected? Explain.
+
+::: callout-tip
+The function `EM_GMM_M2()` returns an $n\times2$ matrix `weights`, which contains the class posterior probabilities evaluated at the parameter estimates from the EM algorithm.
+:::
+
+#### 💪 Problem 4.4
+
+Write a function that implements the EM algorithm for the unsupervised Gaussian mixture model with any number of components $M$, i.e. not limited to $M=2$ as the `EM_GMM_M2()` function. You can still assume that $x$ is univariate. Use your function to estimate two models for the dataset `fish.Rdata` with, respectively, $M=3$ and $M=4$ classes. The dataset can be downloaded from the Canvas page of the course. The dataset contains the lengths of 523 fishes.
+
+::: callout-tip
+Choose suitable starting values for the means by considering a histogram with 30 breaks of the data. Make sure you run enough iterations by monitoring the convergence via the log-likelihood and the expected log-likelihood*.*
+:::
+
+#### 💪 Problem 4.5
+
+Plot $p(x)$ (using the estimates from your EM algorithm) for the two models in Problem 4.4 in the same figure as a (normalised) histogram obtained with the `hist()` with the argument `breaks=30`. Which of the two models seem visually better for modelling the fishs' lengths?
+
+When the features are multivariate, such as in the example with the ASB stock above, the code for the EM algorithm requires some modification. However, the understanding and application of unsupervised Gaussian mixtures is the same as in the univariate case. The next problem uses a package to estimate an unsupervised (multivariate) Gaussian mixture model for the ASB stock application.
+
+#### 💪 Problem 4.6
+
+Use the function `mvnormalmixEM()` from the `mixtools` package to estimate an unsupervised (multivariate) Gaussian mixture model with $M=2$ classes to the ASB stock example with feature vector $\mathbf{x}=(x_1,x_2)^\top$, with $x_1=\text{Close}$ and $x_2=\text{log(Volume)}$. Use all observations as training data. Plot a scatter plot with the predicted classes for the training data (use different colors to represent the different classes).\
+
+## 5. Semi supervised learning
+
+In Problems 1 and 2 we assumed that all labels were observed, whereas none of them were observed in Problems 3 and 4. Another scenario is that labels are partially observed, i.e. we know the labels for a set of observations only. Statistical learning and modelling under this assumption is referred to as semi supervised learning.
+
+One of the most common applications of semi supervised learning is in missing data problems. In this problem, we study the capability of semi supervised learning to learn parameters accurately compared to a fully supervised learning algorithm. Moreover, we compare the accuracy of predictions that account for missing labels to those who ignore the observations with missing labels.
+
+We consider the problem of classifying penguins into species. The data are stored in the file `palmer_penguins_missing.Rdata`, which can be downloaded from the Canvas page of the course[^2]. The dataset contains a set of features for 265 penguins of two different species, Adelie and Gentoo. The species variable is missing for 49 of the penguins. The following code reads in the data and plots the classes and missing labels in a two-dimensional feature space consisting of the penguin's flipper length (length of the wing) and body mass.
+
+[^2]: The original data come from this [source](https://www.kaggle.com/datasets/parulpandey/palmer-archipelago-antarctica-penguin-data).
+
+```{r}
+load(file = 'palmer_penguins_missing.RData')
+# Get indices to the classes
+ind_gentoo <- (palmer_penguins_missing$species == "Gentoo")
+ind_adelie <- (palmer_penguins_missing$species == "Adelie")
+ind_missing <- is.na(palmer_penguins_missing$species)
+
+x1 <- palmer_penguins_missing$flipper_length_mm
+x2 <- palmer_penguins_missing$body_mass_g
+plot(x1[ind_gentoo], x2[ind_gentoo], type = "p", col = "cornflowerblue", xlim = c(170, 250), ylim = c(2500, 7000), xlab = "Flipper length", ylab = "Body mass") 
+lines(x1[ind_adelie], x2[ind_adelie], type = "p", col = "lightcoral") 
+lines(x1[ind_missing], x2[ind_missing], type = "p", pch = "?", cex = 0.8, col = "black")
+legend("topright", legend = c("Gentoo", "Adelie", "Missing"), col = c("cornflowerblue", "lightcoral", "black"), pch = c("o", "o", "?"))
+```
+
+For simplicity we use a single feature, the flipper length, in the problems below.
+
+#### 💪 Problem 5.1
+
+Estimate a (fully) supervised Gaussian mixture model for the penguin data with species as labels and a single feature flipper length. Use separate means and variances for the classes.
+
+::: callout-tip
+A supervised Gaussian mixture assumes all labels are known. We can remove the observations with missing labels by creating a new data frame with no missing values as `df_no_missing<-na.omit(palmer_penguins_missing)`.
+:::
+
+#### 💪 Problem 5.2
+
+Estimate a semi supervised Gaussian mixture model for the penguin data with species as labels and a single feature flipper length. Compare the parameter estimates to those in Problem 5.1. Comment on the result.
+
+::: callout-tip
+As discussed in the lecture, semi supervised learning can be cast as a special version of the EM algorithm. Adapt the `EM_GMM_M2` function to take an extra argument that contains a vector of labels (with `NA` for unknown labels) and construct the weights accordingly. Note that the log-likelihood of the non-missing observations is monitored (for convergence) in semi supervised learning. This requires modifying `log_like_all`.
+:::
+
+#### 💪 Problem 5.3
+
+The dataset `palmer_penguins.Rdata`, which can be downloaded from the Canvas page of the course, contains the true values for the labels that are missing in `palmer_penguins_missing.Rdata`. Compute the accuracy of the predictions for these observations using your semi supervised Gaussian mixture model in Problem 5.2. Compare that to the classification obtained via your supervised Gaussian mixture model in Problem 5.1. Comment on the result.
+
+::: callout-tip
+When using the supervised Gaussian mixture model in Problem 5.1 for classification, recall that for a test observation $x_\star$, the prediction is $$\widehat{y}(x_\star)=\arg\max_m \Pr(y=m|x_\star)=\arg\max_m p(x_\star|y=m)\Pr(y=m).$$
+
+The parameters in the Gaussian class conditionals $p(x_\star|y=m)$ and the marginal class probabilities $\Pr(y=m)$ are estimated from the labelled training data (i.e. without missing label observations).
+:::
+
+::: callout-note
+## End of the course!
+
+If you made it all the way here without losing too much hair (now you know how I became bald) you should be proud of yourself!
+
+I hope you enjoyed the course and good luck on the final project. The project will be a lighter version of the computer labs, in particular since you may reuse computer lab solutions.
+:::
